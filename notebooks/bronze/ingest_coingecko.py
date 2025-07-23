@@ -265,16 +265,38 @@ try:
         
     # Testa a conexão
     print("Testando conexão com a API CoinGecko...")
-    test_data = coingecko.get_market_data(per_page=1)
-    print(f"✅ Conexão com a API CoinGecko bem-sucedida! Versão: {test_data[0].get('api_version', 'desconhecida')}")
+    try:
+        test_data = coingecko.get_market_data(per_page=1)
+        if test_data and isinstance(test_data, list) and len(test_data) > 0:
+            print("✅ Conexão com a API CoinGecko bem-sucedida!")
+            print(f"  Moeda: {test_data[0].get('id', 'N/A')} - Preço: {test_data[0].get('current_price', 'N/A')} {test_data[0].get('currency', 'USD')}")
+        else:
+            print("⚠️ A API retornou uma resposta vazia ou inválida.")
+    except Exception as e:
+        print(f"❌ Erro ao testar a conexão com a API CoinGecko: {str(e)}")
+        print("O script continuará, mas algumas funcionalidades podem não estar disponíveis.")
     
 except Exception as e:
     print(f"❌ Erro ao inicializar o cliente da API: {str(e)}")
     print("O script continuará, mas algumas funcionalidades podem não estar disponíveis.")
     coingecko = None
 
+def get_config_value(key, default=None):
+    """Safely get a value from config, whether it's an object or dict."""
+    try:
+        # Try to access as object
+        return getattr(config, key, default)
+    except (AttributeError, TypeError):
+        # Fall back to dictionary access
+        if isinstance(config, dict):
+            return config.get(key, default)
+        return default
+
 # Inicializa o gerenciador de tabelas Delta
-db_manager = DeltaTableManager(spark, config.catalog_name, config.bronze_schema)
+catalog_name = get_config_value('catalog_name', 'datafusionx_catalog')
+bronze_schema = get_config_value('bronze_schema', 'bronze')
+
+db_manager = DeltaTableManager(spark, catalog_name, bronze_schema)
 
 # Define o nome da tabela
 table_name = "coingecko_raw"
@@ -430,15 +452,11 @@ def process_and_save_data(data):
         
         # Log de sucesso
         print(f"""
-        ====== RESUMO DA INGESTÃO ======
-        • Tabela: {config.catalog_name}.{config.bronze_schema}.{table_name}
+        ✅ Dados processados com sucesso!
         • Registros processados: {metrics['records_processed']}
         • Registros salvos: {metrics['records_saved']}
-        • Colunas processadas: {metrics['columns_processed']}
-        • Colunas ausentes: {len(metrics['missing_columns'])}
-        • Duração: {metrics['duration_seconds']} segundos
-        • Pipeline Run ID: {run_id}
-        ================================
+        • Tabela: {get_config_value('catalog_name')}.{get_config_value('bronze_schema')}.{table_name}
+        • Tempo total: {metrics['duration_seconds']:.2f} segundos
         """)
         
         if metrics['missing_columns']:
@@ -649,7 +667,7 @@ def save_execution_metrics(metrics):
         metrics_df = spark.createDataFrame(metrics_data, schema=metrics_schema)
         
         # Define o caminho da tabela de métricas
-        metrics_table = f"{config.catalog_name}.monitoring.pipeline_executions"
+        metrics_table = f"{get_config_value('catalog_name', 'datafusionx_catalog')}.monitoring.pipeline_executions"
         
         # Verifica se a tabela existe, se não, cria
         if not spark._jsparkSession.catalog().tableExists(metrics_table.split('.')[0], 
@@ -681,7 +699,7 @@ def get_pipeline_status(run_id):
         dict: Dicionário com os dados da execução ou None se não encontrado
     """
     try:
-        metrics_table = f"{config.catalog_name}.monitoring.pipeline_executions"
+        metrics_table = f"{get_config_value('catalog_name', 'datafusionx_catalog')}.monitoring.pipeline_executions"
         if spark._jsparkSession.catalog().tableExists(metrics_table.split('.')[0], 
                                                      f"{metrics_table.split('.')[1]}.{metrics_table.split('.')[2]}"):
             df = spark.sql(f"""
@@ -703,7 +721,7 @@ def get_pipeline_status(run_id):
 # DBTITLE 1,Verificação dos Dados
 # Verifica se os dados foram salvos corretamente
 try:
-    df = spark.table(f"{config.catalog_name}.{config.bronze_schema}.{table_name}")
+    df = spark.table(f"{get_config_value('catalog_name')}.{get_config_value('bronze_schema')}.{table_name}")
     print(f"Total de registros na tabela: {df.count():,}")
     
     # Mostra os dados mais recentes
