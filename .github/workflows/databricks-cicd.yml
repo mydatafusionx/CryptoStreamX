@@ -109,20 +109,17 @@ jobs:
     - name: Run Databricks Job
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
       run: |
-        # Get the job ID from the workflow file
-        JOB_ID=$(jq -r '.job_id' workflows/pipeline_job.json)
+        # Define the path to the main notebook
+        MAIN_NOTEBOOK_PATH="/Users/lnunesvalle@gmail.com/DataFusionX/notebooks/bronze/ingest_coingecko.py"
         
-        if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ]; then
-          echo "No job ID found in pipeline_job.json. Trying to get job by name..."
-          JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[] | select(.settings.name == "crypto_data_pipeline") | .job_id' | head -n 1)
-        fi
+        echo "🚀 Starting Databricks job for notebook: $MAIN_NOTEBOOK_PATH"
         
-        if [ -z "$JOB_ID" ]; then
-          echo "Error: Could not find job ID. Please check your pipeline_job.json file or create the job manually."
-          exit 1
-        fi
+        # Run the notebook directly
+        databricks jobs submit \
+          --python-task "$MAIN_NOTEBOOK_PATH" \
+          --existing-cluster-id ${{ secrets.DATABRICKS_CLUSTER_ID }} \
+          --name "Crypto Data Pipeline - $(date +'%Y%m%d-%H%M%S')" \
+          --timeout 3600 \
+          --max-retries 1
         
-        echo "Running Databricks job with ID: $JOB_ID"
-        databricks jobs run-now --job-id $JOB_ID
-        
-        echo "Job started successfully!"
+        echo "✅ Job submitted successfully!"
