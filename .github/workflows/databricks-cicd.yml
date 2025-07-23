@@ -136,12 +136,20 @@ jobs:
         EOF
         )
         
-        # Create and run the job
-        echo "Creating and running Databricks job..."
-        JOB_ID=$(databricks jobs create --json "$JOB_CONFIG" | jq -r '.job_id')
+        # Create a temporary file for the job config
+        echo "$JOB_CONFIG" > job_config.json
         
-        if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ]; then
-          echo "❌ Failed to create job"
+        # Create the job
+        echo "Creating Databricks job..."
+        JOB_RESPONSE=$(databricks jobs create --json @job_config.json)
+        echo "Job create response: $JOB_RESPONSE"
+        
+        # Extract job ID using grep and cut (more reliable than jq)
+        JOB_ID=$(echo "$JOB_RESPONSE" | grep -o '"job_id":[0-9]*' | cut -d: -f2)
+        
+        if [ -z "$JOB_ID" ]; then
+          echo "❌ Failed to create job. Full response:"
+          echo "$JOB_RESPONSE"
           exit 1
         fi
         
@@ -149,10 +157,15 @@ jobs:
         echo "🚀 Starting job run..."
         
         # Run the job
-        RUN_ID=$(databricks jobs run-now --job-id "$JOB_ID" | jq -r '.run_id')
+        RUN_RESPONSE=$(databricks jobs run-now --job-id "$JOB_ID")
+        echo "Job run response: $RUN_RESPONSE"
         
-        if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-          echo "❌ Failed to start job run"
+        # Extract run ID using grep and cut
+        RUN_ID=$(echo "$RUN_RESPONSE" | grep -o '"run_id":[0-9]*' | cut -d: -f2)
+        
+        if [ -z "$RUN_ID" ]; then
+          echo "❌ Failed to start job run. Full response:"
+          echo "$RUN_RESPONSE"
           exit 1
         fi
         
