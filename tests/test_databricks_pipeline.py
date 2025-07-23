@@ -1,9 +1,7 @@
-"""Tests for the main pipeline functionality."""
 import os
 import sys
 import pytest
-import json
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import MagicMock, patch
 from datetime import datetime
 
 # Skip if not running in Databricks
@@ -48,7 +46,7 @@ SAMPLE_COIN_DATA = [
     }
 ]
 
-class TestPipelineIntegration:
+class TestDatabricksPipeline:
     """Test suite for the data pipeline in Databricks environment."""
     
     @pytest.fixture(autouse=True)
@@ -93,7 +91,8 @@ class TestPipelineIntegration:
         mock_coingecko.get_market_data.return_value = SAMPLE_COIN_DATA
         
         # Apply the mocks
-        monkeypatch.setattr('notebooks.bronze.ingest_coingecko.DeltaTableManager', lambda *args, **kwargs: mock_delta_manager)
+        monkeypatch.setattr('notebooks.bronze.ingest_coingecko.DeltaTableManager', 
+                          lambda *args, **kwargs: mock_delta_manager)
         monkeypatch.setattr('notebooks.bronze.ingest_coingecko.spark', mock_spark)
         monkeypatch.setattr('notebooks.bronze.ingest_coingecko.coingecko', mock_coingecko)
         monkeypatch.setattr('notebooks.bronze.ingest_coingecko.config', mock_config)
@@ -105,70 +104,62 @@ class TestPipelineIntegration:
             mock_widgets.get.return_value = f"test_run_{int(datetime.now().timestamp())}"
             mock_dbutils.widgets = mock_widgets
             monkeypatch.setitem(globals(), 'dbutils', mock_dbutils)
-                from datetime import datetime, timedelta
-                dt1 = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second)
-                dt2 = datetime(other.year, other.month, other.day, other.hour, other.minute, other.second)
-                return dt1 - dt2
-                
-            def __str__(self):
-                return f"{self.year}-{self.month:02d}-{self.day:02d} {self.hour:02d}:{self.minute:02d}:{self.second:02d}"
-                
-            def total_seconds(self):
-                # For duration calculation
-                return 0.0
         
         # Mock the current_timestamp function
-        self.mock_timestamp = MockDateTime(2023, 1, 1, 0, 0, 0)
+        mock_timestamp = MagicMock()
+        mock_timestamp.cast.return_value = 1000
         monkeypatch.setattr('notebooks.bronze.ingest_coingecko.current_timestamp', 
-                          lambda: self.mock_timestamp)
+                          lambda: mock_timestamp)
         
-        # Mock the Spark session
-        mock_spark = MagicMock()
-        mock_spark.createDataFrame.return_value = MagicMock()
-        
-        # Apply the Spark mock
-        monkeypatch.setattr('pyspark.sql.SparkSession.builder.getOrCreate', lambda: mock_spark)
-        
-        # Import the module after setting up the mocks
-        global bronze_main
-        from notebooks.bronze.ingest_coingecko import main as bronze_main
-        
-        yield {
+        return {
             'spark': mock_spark,
             'delta_manager': mock_delta_manager,
-            'client': mock_coingecko,
-            'config': mock_config
+            'coingecko': mock_coingecko,
+            'config': mock_config,
+            'test_df': mock_df,
+            'dbutils': mock_dbutils if 'dbutils' not in globals() else globals()['dbutils']
         }
     
-    def test_bronze_ingestion(self, setup_databricks_environment, capsys):
-        """Test the bronze layer data ingestion in Databricks."""
-        # Get the test environment
-        env = setup_databricks_environment
-        
-        # Import here to ensure we're using the patched version
+    def test_bronze_ingestion_process_data(self, mock_environment):
+        """Test the bronze layer data processing."""
+        # Import inside test to ensure mocks are in place
         from notebooks.bronze.ingest_coingecko import process_and_save_data
         
-        # Run the processing function directly
-        result = process_and_save_data(self.test_data)
+        # Run the processing function
+        result = process_and_save_data(SAMPLE_COIN_DATA)
         
-        # Verify the result
+        # Verify the result structure
         assert isinstance(result, dict)
         assert "pipeline_status" in result
         assert "records_processed" in result
-        assert result["records_processed"] > 0
+        assert result["records_processed"] == len(SAMPLE_COIN_DATA)
         
         # Verify the mock interactions
-        env['client'].get_market_data.assert_not_called()  # Not called because we're calling process_and_save_data directly
+        mock_environment['coingecko'].get_market_data.assert_not_called()
+        mock_environment['spark'].createDataFrame.assert_called_once()
         
-        # Verify the DataFrame was created
-        assert env['spark'].createDataFrame.called if hasattr(env['spark'], 'createDataFrame') else True
+        # Verify the Delta manager was called with the correct parameters
+        assert mock_environment['delta_manager'].write_data.call_count == 1
+        call_args = mock_environment['delta_manager'].write_data.call_args[1]
+        assert call_args['table_name'] == "coingecko_raw"
+        assert call_args['mode'] == "append"
+        assert call_args['merge_schema'] == True
+    
+    def test_bronze_ingestion_main(self, mock_environment):
+        """Test the main bronze ingestion function."""
+        # Import inside test to ensure mocks are in place
+        from notebooks.bronze.ingest_coingecko import main as bronze_main
         
-        # Verify the table was created with the correct name
-        assert mock_delta_manager.write_data.call_args[1]['table_name'] == "coin_gecko_market_data"
+        # Run the main function
+        result = bronze_main()
         
-        # Verify the captured output contains expected error message
-        captured = capsys.readouterr()
-        assert "ERRO NO PIPELINE" in captured.out
+        # Verify the result structure
+        assert isinstance(result, dict)
+        assert "pipeline_status" in result
+        assert "records_processed" in result
         
-        # Print debug information
-        print("Test completed successfully")
+        # Verify the CoinGecko API was called
+        mock_environment['coingecko'].get_market_data.assert_called_once()
+        
+        # Verify the Delta manager was called
+        assert mock_environment['delta_manager'].write_data.call_count == 1

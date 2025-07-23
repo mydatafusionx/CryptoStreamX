@@ -28,7 +28,11 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install databricks-cli
+        pip install pytest pytest-cov pyspark delta-spark pyyaml python-dotenv databricks-cli
+        pip install -e .
+        
+        # Configure Python path for tests
+        echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
         
     - name: Run tests
       run: |

@@ -42,6 +42,35 @@ from utils.api_client import CoinGeckoClient
 from utils.db_utils import DeltaTableManager
 from utils.config import config
 
+# Verifica se estamos em um ambiente Databricks
+IS_DATABRICKS = 'dbutils' in globals()
+
+# Inicialização do Spark
+if not IS_DATABRICKS:
+    try:
+        from pyspark.sql import SparkSession
+        
+        # Configurações para execução local
+        spark = (
+            SparkSession.builder
+            .appName("CryptoStreamX")
+            .master("local[2]")
+            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            .config("spark.sql.shuffle.partitions", "2")
+            .config("spark.driver.memory", "2g")
+            .config("spark.executor.memory", "2g")
+            .config("spark.jars.packages", "io.delta:delta-core_2.12:2.2.0")
+            .enableHiveSupport()
+            .getOrCreate()
+        )
+        print("Spark session criada localmente")
+    except Exception as e:
+        raise ImportError(f"Falha ao inicializar o Spark local: {str(e)}")
+else:
+    print("Usando sessão Spark existente (Databricks)")
+    spark = SparkSession.builder.getOrCreate()
+
 # COMMAND ----------
 
 # DBTITLE 1,Configuração Inicial
@@ -259,6 +288,16 @@ def main():
     Returns:
         dict: Dicionário com métricas e status da execução
     """
+    # Verifica se está em ambiente Databricks
+    is_databricks = 'dbutils' in globals()
+    
+    # Gera um run_id baseado no ambiente
+    run_id = None
+    if is_databricks and dbutils.widgets.get("run_id"):
+        run_id = dbutils.widgets.get("run_id")
+    else:
+        run_id = f"local_run_{int(time.time())}"
+    
     execution_metrics = {
         'pipeline_start_time': current_timestamp(),
         'pipeline_end_time': None,
@@ -268,7 +307,7 @@ def main():
         'processing_status': None,
         'total_records_processed': 0,
         'error': None,
-        'run_id': dbutils.widgets.get("run_id") if dbutils.widgets.get("run_id") else f"manual_run_{int(time.time())}"
+        'run_id': run_id
     }
     
     try:
@@ -330,8 +369,8 @@ def main():
     finally:
         # Finaliza as métricas
         execution_metrics['pipeline_end_time'] = current_timestamp()
-        duration = (execution_metrics['pipeline_end_time'].cast("long") - 
-                   execution_metrics['pipeline_start_time'].cast("long")).cast("double") / 1000
+        # Convert to timestamp in seconds (as float)
+        duration = (execution_metrics['pipeline_end_time'] - execution_metrics['pipeline_start_time']).total_seconds()
         execution_metrics['pipeline_duration_seconds'] = round(duration, 2)
         
         # Log do resumo da execução
