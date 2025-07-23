@@ -32,27 +32,62 @@ import os
 import sys
 
 # Adiciona o diretório src ao path para importações locais
+import os
+import sys
+
+# Tenta várias abordagens para encontrar o diretório src
+possible_paths = []
+
 try:
-    # Para execução local
+    # 1. Tenta a abordagem local
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    src_path = os.path.join(project_root, 'src')
-    if src_path not in sys.path:
-        sys.path.insert(0, src_path)
-except NameError:
-    # Para execução no Databricks
-    import json
-    import inspect
+    possible_paths.append(project_root)  # Raiz do projeto
+    possible_paths.append(os.path.join(project_root, 'src'))  # Diretório src
     
-    # Tenta obter o caminho do notebook atual
+    # 2. Tenta a abordagem do Databricks
     try:
         notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-        project_root = '/Workspace' + os.path.dirname(os.path.dirname(os.path.dirname(notebook_path)))
-        src_path = os.path.join(project_root, 'src')
-        if src_path not in sys.path:
-            sys.path.insert(0, src_path)
+        db_project_root = '/Workspace' + os.path.dirname(os.path.dirname(os.path.dirname(notebook_path)))
+        possible_paths.append(db_project_root)  # Raiz do projeto no Databricks
+        possible_paths.append(os.path.join(db_project_root, 'src'))  # Diretório src no Databricks
     except Exception as e:
-        print(f"Aviso: Não foi possível configurar o path automaticamente: {str(e)}")
-        print("Certifique-se de que os módulos estão no PYTHONPATH")
+        print(f"Aviso: Não foi possível obter o caminho do notebook no Databricks: {str(e)}")
+        
+    # 3. Tenta o diretório de trabalho atual
+    possible_paths.append(os.getcwd())
+    possible_paths.append(os.path.join(os.getcwd(), 'src'))
+    
+    # 4. Tenta o diretório pai
+    parent_dir = os.path.dirname(os.getcwd())
+    possible_paths.append(parent_dir)
+    possible_paths.append(os.path.join(parent_dir, 'src'))
+    
+    # Adiciona todos os caminhos possíveis ao PYTHONPATH
+    added_paths = []
+    for path in possible_paths:
+        if os.path.exists(path) and path not in sys.path:
+            sys.path.insert(0, path)
+            added_paths.append(path)
+    
+    print("Caminhos adicionados ao PYTHONPATH:")
+    for path in added_paths:
+        print(f"- {path}")
+        
+    # Verifica se o módulo utils pode ser importado
+    try:
+        import utils
+        print("✅ Módulo 'utils' importado com sucesso!")
+        print(f"Localização: {utils.__file__}")
+    except ImportError as e:
+        print("❌ Não foi possível importar o módulo 'utils'")
+        print("Caminhos de busca atuais:")
+        for path in sys.path:
+            print(f"- {path}")
+        raise
+        
+except Exception as e:
+    print(f"Erro ao configurar o PYTHONPATH: {str(e)}")
+    raise
 
 # Importações personalizadas
 from utils.api_client import CoinGeckoClient
