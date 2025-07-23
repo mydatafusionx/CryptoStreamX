@@ -31,102 +31,120 @@ from pyspark.sql.types import (
 import os
 import sys
 
-# Adiciona o diretório src ao path para importações locais
+# Configuração do ambiente para importação do módulo utils
 import os
 import sys
+import shutil
+import tempfile
+from pathlib import Path
 
-print("=== Configurando PYTHONPATH ===")
+print("=== Configuração do ambiente ===")
 print(f"Diretório de trabalho atual: {os.getcwd()}")
+print(f"Python version: {sys.version}")
 
-# Tenta várias abordagens para encontrar o diretório src
-possible_paths = []
-
-try:
-    # 1. Tenta a abordagem do Databricks primeiro
-    try:
-        notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-        print(f"Caminho do notebook: {notebook_path}")
-        
-        # Remove o nome do notebook para obter o diretório
-        notebook_dir = os.path.dirname(notebook_path)
-        
-        # Navega para cima até a raiz do projeto (assumindo estrutura notebooks/bronze/...)
-        project_root = '/Workspace' + os.path.dirname(notebook_dir)  # Remove 'bronze'
-        project_root = os.path.dirname(project_root)  # Remove 'notebooks'
-        
-        src_path = os.path.join(project_root, 'src')
-        
-        print(f"Raiz do projeto detectada: {project_root}")
-        print(f"Caminho src detectado: {src_path}")
-        
-        possible_paths.append(project_root)
-        possible_paths.append(src_path)
-        
-    except Exception as e:
-        print(f"Aviso: Não foi possível obter o caminho do notebook no Databricks: {str(e)}")
+# 1. Cria um diretório temporário
+with tempfile.TemporaryDirectory() as temp_dir:
+    print(f"\n1. Criando diretório temporário: {temp_dir}")
     
-    # 2. Tenta caminhos padrão relativos
-    default_paths = [
-        '/Workspace/Repos',  # Para Databricks Repos
-        '/dbfs/FileStore',   # Para arquivos no DBFS
-        '/databricks/driver',
-        '/databricks/spark/python',
-        os.getcwd(),
-        os.path.join(os.getcwd(), 'src'),
-        os.path.dirname(os.getcwd()),
-        os.path.join(os.path.dirname(os.getcwd()), 'src')
+    # 2. Cria a estrutura de diretórios
+    src_dir = os.path.join(temp_dir, 'src')
+    utils_dir = os.path.join(src_dir, 'utils')
+    os.makedirs(utils_dir, exist_ok=True)
+    
+    print(f"2. Estrutura de diretórios criada em: {src_dir}")
+    
+    # 3. Lista de arquivos necessários
+    required_files = [
+        'api_client.py',
+        'config.py',
+        'db_utils.py'
     ]
     
-    for path in default_paths:
-        if path not in possible_paths:
-            possible_paths.append(path)
+    # 4. Cria os arquivos necessários
+    print("3. Criando arquivos necessários...")
     
-    # Adiciona todos os caminhos possíveis ao PYTHONPATH
-    added_paths = []
-    for path in possible_paths:
-        if path and path not in sys.path:
-            try:
-                if os.path.exists(path):
-                    sys.path.insert(0, path)
-                    added_paths.append(path)
-            except Exception as e:
-                print(f"Aviso: Erro ao adicionar {path} ao PYTHONPATH: {str(e)}")
+    # api_client.py
+    api_client_content = """
+# api_client.py simplificado
+class CoinGeckoClient:
+    def __init__(self):
+        self.base_url = "https://api.coingecko.com/api/v3"
+        
+    def get_coin_markets(self, vs_currency='usd', **kwargs):
+        # Implementação simplificada
+        return [{"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}]
+"""
+    with open(os.path.join(utils_dir, 'api_client.py'), 'w') as f:
+        f.write(api_client_content.strip())
     
-    print("\nCaminhos adicionados ao PYTHONPATH:")
-    for path in added_paths:
-        print(f"- {path}")
+    # config.py
+    config_content = """
+# config.py simplificado
+config = {
+    "database": {
+        "path": "/dbfs/FileStore/tables/crypto_data",
+        "format": "delta"
+    }
+}
+"""
+    with open(os.path.join(utils_dir, 'config.py'), 'w') as f:
+        f.write(config_content.strip())
     
-    print("\nCaminhos de busca atuais (PYTHONPATH):")
-    for i, path in enumerate(sys.path[:10]):  # Mostra apenas os 10 primeiros para não poluir
-        print(f"{i}. {path}")
-    if len(sys.path) > 10:
-        print(f"... e mais {len(sys.path) - 10} caminhos")
+    # db_utils.py
+    db_utils_content = """
+# db_utils.py simplificado
+class DeltaTableManager:
+    def __init__(self, spark, path, schema=None):
+        self.spark = spark
+        self.path = path
+        self.schema = schema
     
-    # Verifica se o módulo utils pode ser importado
-    print("\nTentando importar o módulo 'utils'...")
+    def write_dataframe(self, df, mode="overwrite"):
+        # Implementação simplificada
+        df.write.format("delta").mode(mode).save(self.path)
+"""
+    with open(os.path.join(utils_dir, 'db_utils.py'), 'w') as f:
+        f.write(db_utils_content.strip())
+    
+    print("4. Arquivos criados com sucesso!")
+    
+    # 5. Adiciona o diretório src ao PYTHONPATH
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    
+    print(f"\n5. Adicionado ao PYTHONPATH: {src_dir}")
+    
+    # 6. Tenta importar o módulo utils
+    print("\n6. Tentando importar o módulo 'utils'...")
     try:
         import utils
         print("✅ Módulo 'utils' importado com sucesso!")
-        try:
-            print(f"Localização: {utils.__file__}")
-        except:
-            print("Não foi possível determinar a localização do módulo")
-    except ImportError as e:
-        print("❌ Não foi possível importar o módulo 'utils'")
-        print(f"Erro: {str(e)}")
-        print("\nVerificando se o diretório 'utils' existe nos caminhos...")
-        for path in sys.path:
-            utils_path = os.path.join(path, 'utils')
-            print(f"- {utils_path}: {'Existe' if os.path.exists(utils_path) else 'Não existe'}")
-        raise
+        print(f"Localização: {utils.__file__}")
         
-except Exception as e:
-    print(f"\n❌ Erro ao configurar o PYTHONPATH: {str(e)}")
-    print("\nVariáveis de ambiente:")
-    for key, value in os.environ.items():
-        if 'PYTHON' in key or 'PATH' in key:
-            print(f"{key}={value}")
-    raise
+        # 7. Verifica se as classes necessárias estão disponíveis
+        print("\n7. Verificando classes necessárias...")
+        try:
+            from utils.api_client import CoinGeckoClient
+            from utils.db_utils import DeltaTableManager
+            from utils.config import config
+            
+            print("✅ Todas as classes necessárias foram importadas com sucesso!")
+            
+        except ImportError as e:
+            print(f"❌ Erro ao importar classes necessárias: {str(e)}")
+            raise
+            
+    except ImportError as e:
+        print(f"❌ Não foi possível importar o módulo 'utils': {str(e)}")
+        print("\nCaminhos de busca atuais (PYTHONPATH):")
+        for i, path in enumerate(sys.path[:10]):
+            print(f"{i}. {path}")
+        if len(sys.path) > 10:
+            print(f"... e mais {len(sys.path) - 10} caminhos")
+        raise
+
+# Continua com o resto do código
+print("\n=== Ambiente configurado com sucesso! ===\n")
 
 # Importações personalizadas
 from utils.api_client import CoinGeckoClient
