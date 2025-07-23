@@ -26,14 +26,10 @@ jobs:
         
     - name: Install dependencies
       run: |
-        # Install system dependencies
-        sudo apt-get update
-        sudo apt-get install -y jq
-        
         # Install Python dependencies
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov pyspark delta-spark pyyaml python-dotenv databricks-cli
+        pip install pytest pytest-cov pyspark delta-spark pyyaml python-dotenv "databricks-cli>=0.205.0"
         pip install -e .
         
         # Configure Python path for tests
@@ -125,47 +121,37 @@ jobs:
         echo "🚀 Starting SQL execution on Warehouse ID: $WAREHOUSE_ID"
         
         # Create a temporary file for SQL queries
-        cat > queries.json << 'EOF'
-        {
-          "statements": [
-            {
-              "statement": "CREATE TABLE IF NOT EXISTS example_table (id INT, name STRING, value DOUBLE)",
-              "result_index": 0
-            },
-            {
-              "statement": "INSERT INTO example_table VALUES (1, 'test', 3.14)",
-              "result_index": 1
-            },
-            {
-              "statement": "SELECT * FROM example_table",
-              "result_index": 2
-            }
-          ]
-        }
+        cat > queries.sql << 'EOF'
+        -- Create example table if not exists
+        CREATE TABLE IF NOT EXISTS example_table (
+          id INT,
+          name STRING,
+          value DOUBLE
+        );
+        
+        -- Insert sample data
+        INSERT INTO example_table VALUES
+          (1, 'test', 3.14);
+          
+        -- Query the data
+        SELECT * FROM example_table;
         EOF
         
-        # Execute the SQL statements using Databricks SQL Execution API
+        # Execute the SQL file using the new Databricks SQL CLI
         echo "📝 Executing SQL queries..."
         
-        # First, create an execution context
-        RESPONSE=$(databricks api post /api/2.0/sql/statements \
-          --data @queries.json \
-          --query warehouse_id=$WAREHOUSE_ID)
-          
-        # Get the statement ID from the response
-        STATEMENT_ID=$(echo $RESPONSE | jq -r '.statement_id')
+        # Execute the SQL file
+        databricks sql query run \
+          --warehouse-id "$WAREHOUSE_ID" \
+          --file queries.sql \
+          --output JSON
         
-        if [ -z "$STATEMENT_ID" ] || [ "$STATEMENT_ID" = "null" ]; then
-          echo "❌ Failed to create SQL statement execution"
-          echo "Response: $RESPONSE"
-          exit 1
-        fi
-        
-        echo "✅ SQL execution started with statement ID: $STATEMENT_ID"
-        echo "🔗 View your SQL Warehouse: ${{ secrets.DATABRICKS_HOST }}#sql/warehouses/$WAREHOUSE_ID"
-        
-        # Optional: Check the status of the execution
-        echo "⏳ Checking execution status..."
-        databricks api get /api/2.0/sql/statements/$STATEMENT_ID
+        # Execute a simple query to verify
+        echo "✅ Verifying data was inserted..."
+        databricks sql query run \
+          --warehouse-id "$WAREHOUSE_ID" \
+          --query "SELECT * FROM example_table" \
+          --output JSON
         
         echo "✅ SQL execution completed successfully!"
+        echo "🔗 View your SQL Warehouse: ${{ secrets.DATABRICKS_HOST }}#sql/warehouses/$WAREHOUSE_ID"
