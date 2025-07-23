@@ -31,7 +31,7 @@ jobs:
         
     - name: Deploy to Databricks
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-      uses: databricks/run-notebook@v1
+      uses: databricks/run-notebook@v2.0.0
       with:
         local-notebook-path: 'notebooks/'
         workspace-folder: '/Repos/DataFusionX/CryptoStreamX/notebooks'
@@ -40,5 +40,8 @@ jobs:
         
     - name: Run Databricks Job
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      env:
+        DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+        DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
       run: |
-        databricks jobs run-now --job-id ${{ secrets.DATABRICK_JOB_ID }} --token ${{ secrets.DATABRICKS_TOKEN }} --host ${{ secrets.DATABRICKS_HOST }}
+        databricks jobs run-now --job-id ${{ secrets.DATABRICKS_JOB_ID }}
