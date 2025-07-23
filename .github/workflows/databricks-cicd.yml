@@ -44,11 +44,27 @@ jobs:
     - name: Configure Databricks CLI
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
       run: |
-        mkdir -p ~/.databricks
-        echo "[DEFAULT]" > $DATABRICKS_CONFIG_FILE
-        echo "host = $DATABRICKS_HOST" >> $DATABRICKS_CONFIG_FILE
-        echo "token = $DATABRICKS_TOKEN" >> $DATABRICKS_CONFIG_FILE
-        echo "jobs-api-version = 2.1" >> $DATABRICKS_CONFIG_FILE
+        # Create .databricks directory if it doesn't exist
+        mkdir -p $HOME/.databricks
+        
+        # Ensure the config file path exists and is writable
+        touch $HOME/.databrickscfg
+        chmod 600 $HOME/.databrickscfg
+        
+        # Write the configuration
+        cat > $HOME/.databrickscfg <<EOL
+        [DEFAULT]
+        host = ${{ secrets.DATABRICKS_HOST }}
+        token = ${{ secrets.DATABRICKS_TOKEN }}
+        jobs-api-version = 2.1
+        EOL
+        
+        # Verify the configuration
+        echo "Databricks configuration:"
+        cat $HOME/.databrickscfg
+        
+        # Set environment variable to point to the config file
+        echo "DATABRICKS_CONFIG_FILE=$HOME/.databrickscfg" >> $GITHUB_ENV
         
     - name: Deploy Notebooks to Databricks
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
