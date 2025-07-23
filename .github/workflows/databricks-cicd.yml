@@ -34,25 +34,27 @@ jobs:
         # Configure Python path for tests
         echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
         
-    - name: Install Databricks CLI
+    - name: Install Databricks CLI with pip
       run: |
-        # Install prerequisites
-        sudo apt-get update
-        sudo apt-get install -y wget unzip
+        # Install the latest pre-release version of Databricks CLI
+        echo "Installing Databricks CLI with pip..."
+        pip install --upgrade "databricks-cli>=0.18.0" --pre
         
-        # Download specific version of Databricks CLI
-        VERSION="0.205.0"
-        echo "Installing Databricks CLI version $VERSION"
-        
-        # Download and install the Databricks CLI
-        wget -q https://github.com/databricks/cli/releases/download/v${VERSION}/databricks_cli_${VERSION}_linux_amd64.zip
-        unzip databricks_cli_${VERSION}_linux_amd64.zip
-        chmod +x databricks
-        sudo mv databricks /usr/local/bin/
+        # Install SQL CLI extension
+        pip install --upgrade databricks-sql-cli
         
         # Verify installation
-        echo "Databricks CLI version:"
-        databricks --version
+        echo "=== Installed CLI versions ==="
+        databricks -v || echo "Databricks CLI not found"
+        which databricks || echo "Databricks CLI not in PATH"
+        
+        # Create a simple test script to verify SQL commands work
+        echo '#!/bin/bash
+        echo "Testing Databricks SQL CLI..."
+        databricks sql --version || echo "SQL CLI not found"
+        ' > test_sql_cli.sh
+        chmod +x test_sql_cli.sh
+        ./test_sql_cli.sh
         
     - name: Run basic tests
       run: |
@@ -156,21 +158,73 @@ jobs:
         SELECT * FROM example_table;
         EOF
         
-        # Execute the SQL file using the new Databricks SQL CLI
+        # Execute SQL using the Databricks CLI (legacy method)
         echo "📝 Executing SQL queries..."
         
-        # Execute the SQL file
-        databricks sql query run \
-          --warehouse-id "$WAREHOUSE_ID" \
-          --file queries.sql \
-          --output JSON
+        # Set Databricks config
+        echo "Setting up Databricks configuration..."
+        cat > $HOME/.databrickscfg << EOF
+        [DEFAULT]
+        host = ${{ secrets.DATABRICKS_HOST }}
+        token = ${{ secrets.DATABRICKS_TOKEN }}
+        EOF
         
-        # Execute a simple query to verify
-        echo "✅ Verifying data was inserted..."
-        databricks sql query run \
-          --warehouse-id "$WAREHOUSE_ID" \
-          --query "SELECT * FROM example_table" \
-          --output JSON
+        # Execute SQL using the Databricks SQL CLI (legacy)
+        echo "Executing SQL file..."
+        databricks workspace import \
+          --language SQL \
+          --overwrite \
+          queries.sql \
+          "/tmp/run_queries.sql"
+          
+        # Run the SQL job
+        echo "Running SQL job..."
+        JOB_ID=$(databricks jobs create \
+          --json '{
+            "name": "CI_CD_SQL_Job",
+            "tasks": [
+              {
+                "task_key": "run_sql",
+                "sql_task": {
+                  "query": {
+                    "query_id": "$(databricks sql queries create \
+                      --data @- <<EOF
+                      {
+                        "data_source_id": "$WAREHOUSE_ID",
+                        "query": "$(cat queries.sql | tr '\n' ' ' | sed 's/"/\\"/g')",
+                        "name": "CI_CD_Query"
+                      }
+                      EOF
+                    )"
+                  },
+                  "warehouse_id": "$WAREHOUSE_ID"
+                }
+              }
+            ]
+          }' | jq -r '.job_id')
+          
+        # Run the job and wait for completion
+        echo "Job ID: $JOB_ID"
+        RUN_ID=$(databricks jobs run-now --job-id $JOB_ID | jq -r '.run_id')
         
-        echo "✅ SQL execution completed successfully!"
+        # Wait for job completion
+        echo "Waiting for job to complete..."
+        while :; do
+          STATUS=$(databricks runs get --run-id $RUN_ID | jq -r '.state.life_cycle_state')
+          echo "Current status: $STATUS"
+          [[ "$STATUS" == "TERMINATED" || "$STATUS" == "SKIPPED" || "$STATUS" == "INTERNAL_ERROR" ]] && break
+          sleep 10
+        done
+        
+        # Get final status
+        FINAL_STATUS=$(databricks runs get --run-id $RUN_ID | jq -r '.state.result_state')
+        
+        if [ "$FINAL_STATUS" == "SUCCESS" ]; then
+          echo "✅ SQL execution completed successfully!"
+        else
+          echo "❌ SQL execution failed with status: $FINAL_STATUS"
+          databricks runs get-output --run-id $RUN_ID
+          exit 1
+        fi
+        
         echo "🔗 View your SQL Warehouse: ${{ secrets.DATABRICKS_HOST }}#sql/warehouses/$WAREHOUSE_ID"
