@@ -32,6 +32,8 @@ jobs:
         
     - name: Run tests
       run: |
+        # Adiciona o diretório raiz ao PYTHONPATH
+        export PYTHONPATH=$PYTHONPATH:${{ github.workspace }}
         python -m pytest tests/ -v --cov=.
     
     - name: Configure Databricks CLI
