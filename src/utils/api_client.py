@@ -12,13 +12,14 @@ logger = logging.getLogger(__name__)
 class APIClient:
     """Generic API client with retry logic and error handling."""
     
-    def __init__(self, base_url: str, max_retries: int = 3, backoff_factor: float = 0.5):
+    def __init__(self, base_url: str, max_retries: int = 3, backoff_factor: float = 0.5, headers: Optional[Dict[str, str]] = None):
         """Initialize the API client.
         
         Args:
             base_url: Base URL for the API
             max_retries: Maximum number of retries for failed requests
             backoff_factor: Backoff factor for retries
+            headers: Custom headers to include in all requests
         """
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
@@ -28,7 +29,7 @@ class APIClient:
             total=max_retries,
             backoff_factor=backoff_factor,
             status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["GET", "POST"]
+            allowed_methods=["GET", "POST", "PUT", "DELETE"]
         )
         
         # Mount the retry strategy to http:// and https://
@@ -37,11 +38,17 @@ class APIClient:
         self.session.mount("https://", adapter)
         
         # Set default headers
-        self.session.headers.update({
+        default_headers = {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
             'User-Agent': 'CryptoStreamX/1.0'
-        })
+        }
+        
+        # Update with any custom headers provided
+        if headers:
+            default_headers.update(headers)
+            
+        self.session.headers.update(default_headers)
     
     def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
         """Send a GET request to the API.
@@ -63,6 +70,88 @@ class APIClient:
         try:
             response = self.session.get(url, params=params, **kwargs)
             response.raise_for_status()
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API request failed: {str(e)}")
+            raise
+            
+    def post(self, endpoint: str, json: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+        """Send a POST request to the API.
+        
+        Args:
+            endpoint: API endpoint
+            json: JSON data to send in the request body
+            **kwargs: Additional arguments to pass to requests.post()
+            
+        Returns:
+            Dict containing the JSON response
+            
+        Raises:
+            requests.exceptions.RequestException: If the request fails after all retries
+        """
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        logger.info(f"Sending POST request to {url}")
+        
+        try:
+            response = self.session.post(url, json=json, **kwargs)
+            response.raise_for_status()
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API request failed: {str(e)}")
+            raise
+            
+    def put(self, endpoint: str, json: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+        """Send a PUT request to the API.
+        
+        Args:
+            endpoint: API endpoint
+            json: JSON data to send in the request body
+            **kwargs: Additional arguments to pass to requests.put()
+            
+        Returns:
+            Dict containing the JSON response
+            
+        Raises:
+            requests.exceptions.RequestException: If the request fails after all retries
+        """
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        logger.info(f"Sending PUT request to {url}")
+        
+        try:
+            response = self.session.put(url, json=json, **kwargs)
+            response.raise_for_status()
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API request failed: {str(e)}")
+            raise
+            
+    def delete(self, endpoint: str, **kwargs) -> Dict[str, Any]:
+        """Send a DELETE request to the API.
+        
+        Args:
+            endpoint: API endpoint
+            **kwargs: Additional arguments to pass to requests.delete()
+            
+        Returns:
+            Dict containing the JSON response
+            
+        Raises:
+            requests.exceptions.RequestException: If the request fails after all retries
+        """
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        logger.info(f"Sending DELETE request to {url}")
+        
+        try:
+            response = self.session.delete(url, **kwargs)
+            response.raise_for_status()
+            
+            # Some DELETE endpoints might not return content
+            if response.status_code == 204 or not response.content:
+                return {"status": "success", "message": "Resource deleted successfully"}
+                
             return response.json()
             
         except requests.exceptions.RequestException as e:

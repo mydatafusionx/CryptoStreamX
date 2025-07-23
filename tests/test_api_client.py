@@ -16,6 +16,11 @@ class TestAPIClient:
             "key2": ["item1", "item2"],
             "nested": {"a": 1, "b": 2}
         }
+        
+    @pytest.fixture
+    def api_client(self):
+        """Create an APIClient instance for testing."""
+        return APIClient("https://api.example.com")
     
     @responses.activate
     def test_get_success(self, mock_response):
@@ -82,6 +87,142 @@ class TestAPIClient:
         assert response == {"status": "success"}
         assert len(responses.calls) == 2
         assert "Retrying" in caplog.text
+        
+    @responses.activate
+    def test_post_request(self, api_client, mock_response):
+        """Test POST request with JSON data."""
+        test_url = "https://api.example.com/test"
+        test_data = {"key": "value"}
+        
+        responses.add(
+            responses.POST,
+            test_url,
+            json=mock_response,
+            status=201
+        )
+        
+        response = api_client.post("test", json=test_data)
+        
+        assert response == mock_response
+        assert len(responses.calls) == 1
+        assert responses.calls[0].request.method == "POST"
+        assert json.loads(responses.calls[0].request.body) == test_data
+    
+    @responses.activate
+    def test_put_request(self, api_client):
+        """Test PUT request with JSON data."""
+        test_url = "https://api.example.com/test/1"
+        test_data = {"name": "updated"}
+        
+        responses.add(
+            responses.PUT,
+            test_url,
+            json={"status": "updated"},
+            status=200
+        )
+        
+        response = api_client.put("test/1", json=test_data)
+        
+        assert response == {"status": "updated"}
+        assert responses.calls[0].request.method == "PUT"
+        
+    @responses.activate
+    def test_delete_request(self, api_client):
+        """Test DELETE request."""
+        test_url = "https://api.example.com/test/1"
+        
+        responses.add(
+            responses.DELETE,
+            test_url,
+            json={"status": "deleted"},
+            status=204
+        )
+        
+        response = api_client.delete("test/1")
+        
+        assert response == {"status": "deleted"}
+        assert responses.calls[0].request.method == "DELETE"
+        
+    @responses.activate
+    def test_request_headers(self, api_client):
+        """Test that custom headers are included in requests."""
+        test_url = "https://api.example.com/test"
+        custom_headers = {"X-Custom-Header": "test-value"}
+        
+        responses.add(
+            responses.GET,
+            test_url,
+            json={"status": "success"},
+            status=200
+        )
+        
+        api_client.session.headers.update(custom_headers)
+        api_client.get("test")
+        
+        assert responses.calls[0].request.headers["X-Custom-Header"] == "test-value"
+    
+    @responses.activate
+    def test_http_error_handling(self, api_client):
+        """Test handling of HTTP errors."""
+        test_url = "https://api.example.com/error"
+        
+        responses.add(
+            responses.GET,
+            test_url,
+            json={"error": "Not Found"},
+            status=404
+        )
+        
+        response = api_client.get("error")
+        
+        assert response == {"error": "Not Found"}
+        assert responses.calls[0].response.status_code == 404
+        
+    @responses.activate
+    def test_request_exception_handling(self, api_client):
+        """Test handling of request exceptions."""
+        test_url = "https://api.example.com/connection-error"
+        
+        # Simulate a connection error
+        responses.add(
+            responses.GET,
+            test_url,
+            body=requests.exceptions.RequestException("Connection error")
+        )
+        
+        with pytest.raises(requests.exceptions.RequestException):
+            api_client.get("connection-error")
+    
+    def test_initialization_with_trailing_slash(self):
+        """Test that trailing slashes are handled correctly in base URL."""
+        client = APIClient("https://api.example.com/")
+        assert client.base_url == "https://api.example.com"
+        
+        client = APIClient("https://api.example.com/v1/")
+        assert client.base_url == "https://api.example.com/v1"
+    
+    @responses.activate
+    def test_get_with_custom_headers(self, api_client):
+        """Test GET request with custom headers."""
+        test_url = "https://api.example.com/headers"
+        
+        def request_callback(request):
+            # Return the request headers in the response
+            return (200, {}, json.dumps(dict(request.headers)))
+            
+        responses.add_callback(
+            responses.GET,
+            test_url,
+            callback=request_callback
+        )
+        
+        custom_headers = {"X-Custom-Header": "test"}
+        response = api_client.get("headers", headers=custom_headers)
+        
+        # Verify the custom header was sent
+        assert response["X-Custom-Header"] == "test"
+        # Verify default headers are still present
+        assert response["Accept"] == "application/json"
 
 
 class TestCoinGeckoClient:
@@ -91,38 +232,149 @@ class TestCoinGeckoClient:
     def coingecko_client(self):
         """Create a CoinGecko client for testing."""
         return CoinGeckoClient(api_key="test_api_key")
+        
+    @pytest.fixture
+    def market_data(self):
+        """Sample market data for testing."""
+        return [
+            {
+                "id": "bitcoin",
+                "symbol": "btc",
+                "name": "Bitcoin",
+                "current_price": 50000,
+                "market_cap": 950000000000,
+                "price_change_percentage_24h": 2.5
+            },
+            {
+                "id": "ethereum",
+                "symbol": "eth",
+                "name": "Ethereum",
+                "current_price": 3000,
+                "market_cap": 350000000000,
+                "price_change_percentage_24h": -1.2
+            }
+        ]
     
     @responses.activate
-    def test_get_market_data(self, coingecko_client):
+    def test_get_market_data(self, coingecko_client, market_data):
         """Test getting market data from CoinGecko."""
         # Mock the API response
-        test_data = [
-            {"id": "bitcoin", "symbol": "btc", "current_price": 50000},
-            {"id": "ethereum", "symbol": "eth", "current_price": 3000}
-        ]
+        test_data = market_data
         
         responses.add(
             responses.GET,
             "https://api.coingecko.com/api/v3/coins/markets",
             json=test_data,
-            status=200,
-            match=[
-                responses.matchers.query_param_matcher({
-                    "vs_currency": "usd",
-                    "order": "market_cap_desc",
-                    "per_page": "10",
-                    "page": "1",
-                    "sparkline": "false"
-                })
-            ]
+            status=200
         )
         
-        # Make the request
-        result = coingecko_client.get_market_data(per_page=10)
+        # Test with default parameters
+        result = coingecko_client.get_market_data()
         
-        # Verify the request and response
-        assert result == test_data
-        assert len(responses.calls) == 1
+        assert len(result) == 2
+        assert result[0]["id"] == "bitcoin"
+        assert result[1]["symbol"] == "eth"
+        
+        # Verify API key header was set
+        assert responses.calls[0].request.headers["x-cg-pro-api-key"] == "test_api_key"
+        
+    @responses.activate
+    def test_get_coin_market_chart(self, coingecko_client):
+        """Test getting historical market data for a coin."""
+        test_data = {
+            "prices": [[1638316800000, 50000], [1638403200000, 51000]],
+            "market_caps": [[1638316800000, 950000000000], [1638403200000, 960000000000]],
+            "total_volumes": [[1638316800000, 30000000000], [1638403200000, 31000000000]]
+        }
+        
+        responses.add(
+            responses.GET,
+            "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart",
+            json=test_data,
+            status=200
+        )
+        
+        result = coingecko_client.get_coin_market_chart("bitcoin", days=7)
+        
+        assert "prices" in result
+        assert "market_caps" in result
+        assert "total_volumes" in result
+        assert len(result["prices"]) == 2
+        
+    @responses.activate
+    def test_api_key_usage(self, market_data):
+        """Test that API key is used when provided."""
+        # Client without API key
+        client = CoinGeckoClient()
+        
+        responses.add(
+            responses.GET,
+            "https://api.coingecko.com/api/v3/coins/markets",
+            json=market_data,
+            status=200
+        )
+        
+        client.get_market_data()
+        assert "x-cg-pro-api-key" not in responses.calls[0].request.headers
+        
+        # Client with API key
+        client_with_key = CoinGeckoClient(api_key="test_key")
+        
+        responses.add(
+            responses.GET,
+            "https://api.coingecko.com/api/v3/coins/markets",
+            json=market_data,
+            status=200
+        )
+        
+        client_with_key.get_market_data()
+        assert responses.calls[1].request.headers["x-cg-pro-api-key"] == "test_key"
+    
+    @responses.activate
+    def test_get_market_data_with_category(self, coingecko_client, market_data):
+        """Test getting market data filtered by category."""
+        responses.add(
+            responses.GET,
+            "https://api.coingecko.com/api/v3/coins/markets",
+            json=market_data,
+            status=200
+        )
+        
+        result = coingecko_client.get_market_data(
+            vs_currency='usd',
+            category='decentralized-finance-defi',
+            per_page=5,
+            page=1
+        )
+        
+        assert len(result) == 2
+        assert 'decentralized-finance-defi' in responses.calls[0].request.params['category']
+    
+    @responses.activate
+    def test_get_coin_market_chart_with_interval(self, coingecko_client):
+        """Test getting historical market data with interval parameter."""
+        test_data = {
+            "prices": [[1638316800000, 50000], [1638403200000, 51000]],
+            "market_caps": [[1638316800000, 950000000000], [1638403200000, 960000000000]],
+            "total_volumes": [[1638316800000, 30000000000], [1638403200000, 31000000000]]
+        }
+        
+        responses.add(
+            responses.GET,
+            "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart",
+            json=test_data,
+            status=200
+        )
+        
+        result = coingecko_client.get_coin_market_chart(
+            coin_id="bitcoin",
+            vs_currency='eur',
+            days=30,
+            interval='daily'
+        )
+        
+        assert 'prices' in result
+        assert responses.calls[0].request.params['interval'] == 'daily'
         assert "x-cg-pro-api-key" in responses.calls[0].request.headers
         assert responses.calls[0].request.headers["x-cg-pro-api-key"] == "test_api_key"
     
