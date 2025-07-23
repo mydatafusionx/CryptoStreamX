@@ -1,0 +1,141 @@
+{
+  "name": "crypto_data_pipeline",
+  "email_notifications": {
+    "no_alert_for_skipped_runs": false
+  },
+  "webhook_notifications": {},
+  "timeout_seconds": 0,
+  "max_concurrent_runs": 1,
+  "tasks": [
+    {
+      "task_key": "ingest_coingecko_bronze",
+      "description": "Ingest raw data from CoinGecko API into Bronze layer",
+      "depends_on": [],
+      "notebook_task": {
+        "notebook_path": "/Repos/DataFusionX/CryptoStreamX/notebooks/bronze/ingest_coingecko",
+        "source": "WORKSPACE"
+      },
+      "new_cluster": {
+        "spark_version": "12.2.x-scala2.12",
+        "node_type_id": "i3.xlarge",
+        "num_workers": 1,
+        "spark_conf": {
+          "spark.databricks.delta.retentionDurationCheck.enabled": "false",
+          "spark.sql.sources.partitionOverwriteMode": "dynamic",
+          "spark.sql.extensions": "io.delta.sql.DeltaSparkSessionExtension",
+          "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+        },
+        "custom_tags": {
+          "purpose": "ingestion",
+          "layer": "bronze"
+        },
+        "autoscale": {
+          "min_workers": 1,
+          "max_workers": 2
+        }
+      }
+    },
+    {
+      "task_key": "transform_coingecko_silver",
+      "description": "Transform raw data into clean Silver layer tables",
+      "depends_on": [
+        {
+          "task_key": "ingest_coingecko_bronze"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "/Repos/DataFusionX/CryptoStreamX/notebooks/silver/transform_coingecko",
+        "source": "WORKSPACE"
+      },
+      "new_cluster": {
+        "spark_version": "12.2.x-scala2.12",
+        "node_type_id": "i3.xlarge",
+        "num_workers": 2,
+        "spark_conf": {
+          "spark.sql.shuffle.partitions": "8",
+          "spark.sql.adaptive.enabled": "true",
+          "spark.sql.adaptive.coalescePartitions.enabled": "true"
+        },
+        "custom_tags": {
+          "purpose": "transformation",
+          "layer": "silver"
+        },
+        "autoscale": {
+          "min_workers": 1,
+          "max_workers": 4
+        }
+      }
+    },
+    {
+      "task_key": "aggregate_metrics_gold",
+      "description": "Create aggregated metrics in Gold layer",
+      "depends_on": [
+        {
+          "task_key": "transform_coingecko_silver"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "/Repos/DataFusionX/CryptoStreamX/notebooks/gold/aggregate_metrics",
+        "source": "WORKSPACE"
+      },
+      "new_cluster": {
+        "spark_version": "12.2.x-scala2.12",
+        "node_type_id": "i3.2xlarge",
+        "num_workers": 2,
+        "spark_conf": {
+          "spark.sql.shuffle.partitions": "16",
+          "spark.sql.adaptive.enabled": "true",
+          "spark.sql.adaptive.coalescePartitions.enabled": "true"
+        },
+        "custom_tags": {
+          "purpose": "aggregation",
+          "layer": "gold"
+        },
+        "autoscale": {
+          "min_workers": 2,
+          "max_workers": 8
+        }
+      }
+    },
+    {
+      "task_key": "monitor_pipeline",
+      "description": "Monitor pipeline execution and send notifications",
+      "depends_on": [
+        {
+          "task_key": "aggregate_metrics_gold"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "/Repos/DataFusionX/CryptoStreamX/notebooks/monitoring/pipeline_monitor",
+        "source": "WORKSPACE"
+      },
+      "existing_cluster_id": "${databricks_cluster_id}",
+      "email_notifications": {
+        "on_success": ["${notification_email}"],
+        "on_failure": ["${notification_email}"]
+      }
+    }
+  ],
+  "parameters": [
+    {
+      "name": "databricks_cluster_id",
+      "default": ""
+    },
+    {
+      "name": "notification_email",
+      "default": ""
+    }
+  ],
+  "schedule": {
+    "quartz_cron_expression": "0 0 * * * ?",  // Run hourly
+    "timezone_id": "UTC",
+    "pause_status": "PAUSED"  // Start paused, enable after testing
+  },
+  "max_retries": 2,
+  "min_retry_interval_millis": 300000,  // 5 minutes between retries
+  "retry_on_timeout": true,
+  "tags": {
+    "project": "crypto_stream_x",
+    "managed_by": "databricks_workflows"
+  }
+}
