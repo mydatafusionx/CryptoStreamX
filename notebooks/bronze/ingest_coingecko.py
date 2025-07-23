@@ -297,8 +297,24 @@ catalog_name = get_config_value('catalog_name', 'datafusionx_catalog')
 bronze_schema = get_config_value('bronze_schema', 'bronze')
 table_name = "coingecko_raw"
 
+# Debug: Verificar os parâmetros antes de inicializar
+print(f"Inicializando DeltaTableManager com os seguintes parâmetros:")
+print(f"- catalog_name: {catalog_name}")
+print(f"- schema_name: {bronze_schema}")
+print(f"- table_name: {table_name}")
+
 # Inicializa o DeltaTableManager com todos os parâmetros necessários
-db_manager = DeltaTableManager(spark, catalog_name, bronze_schema, table_name)
+try:
+    db_manager = DeltaTableManager(
+        spark=spark,
+        catalog_name=catalog_name,
+        schema_name=bronze_schema,
+        table_name=table_name
+    )
+    print("✅ DeltaTableManager inicializado com sucesso!")
+except Exception as e:
+    print(f"❌ Erro ao inicializar DeltaTableManager: {str(e)}")
+    raise
 
 # COMMAND ----------
 
