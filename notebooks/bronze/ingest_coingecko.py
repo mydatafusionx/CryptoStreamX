@@ -297,8 +297,8 @@ catalog_name = get_config_value('catalog_name', 'datafusionx_catalog')
 bronze_schema = get_config_value('bronze_schema', 'bronze')
 table_name = "coingecko_raw"
 
-# Inicializa o DeltaTableManager com os parâmetros corretos
-db_manager = DeltaTableManager(spark, catalog_name, bronze_schema)
+# Inicializa o DeltaTableManager com todos os parâmetros necessários
+db_manager = DeltaTableManager(spark, catalog_name, bronze_schema, table_name)
 
 # COMMAND ----------
 

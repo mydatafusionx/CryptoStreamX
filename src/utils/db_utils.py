@@ -11,17 +11,19 @@ logger = logging.getLogger(__name__)
 class DeltaTableManager:
     """Helper class for managing Delta tables."""
     
-    def __init__(self, spark: SparkSession, catalog_name: str, schema_name: str):
+    def __init__(self, spark: SparkSession, catalog_name: str, schema_name: str, table_name: str = None):
         """Initialize the DeltaTableManager.
         
         Args:
             spark: Active SparkSession
             catalog_name: Name of the catalog (e.g., 'datafusionx_catalog')
             schema_name: Name of the schema (e.g., 'bronze', 'silver', 'gold')
+            table_name: Optional default table name to use for operations
         """
         self.spark = spark
         self.catalog_name = catalog_name
         self.schema_name = schema_name
+        self.table_name = table_name
         self.full_schema_path = f"{catalog_name}.{schema_name}"
         
         # Ensure catalog and schema exist
