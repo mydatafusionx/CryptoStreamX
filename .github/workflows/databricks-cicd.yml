@@ -65,44 +65,46 @@ jobs:
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
       run: |
         # Define the target workspace path
-        WORKSPACE_PATH="/Users/lnunesvalle@gmail.com/DataFusionX/notebooks"
+        WORKSPACE_BASE="/Users/lnunesvalle@gmail.com/DataFusionX"
         
-        # Create a temporary directory for the notebooks
-        TEMP_DIR=$(mktemp -d)
-        cp -r notebooks/* "$TEMP_DIR/"
+        # Create the base directory
+        echo "Creating base directory: $WORKSPACE_BASE"
+        databricks workspace mkdirs "$WORKSPACE_BASE"
         
-        # Create a zip file of the notebooks
-        cd "$TEMP_DIR"
-        zip -r notebooks.zip ./*
+        # Function to process a single notebook
+        process_notebook() {
+          local src_file="$1"
+          local rel_path="${src_file#notebooks/}"
+          local target_dir="$WORKSPACE_BASE/$(dirname "$rel_path")"
+          
+          # Create target directory if it doesn't exist
+          if [[ "$target_dir" != "$WORKSPACE_BASE" ]]; then
+            echo "Creating directory: $target_dir"
+            databricks workspace mkdirs "$target_dir"
+          fi
+          
+          # Import the notebook
+          echo "Deploying $src_file to $target_dir"
+          databricks workspace import \
+            --language PYTHON \
+            --overwrite \
+            "$src_file" \
+            "$WORKSPACE_BASE/$rel_path"
+        }
         
-        # Create the target directory
-        echo "Creating directory: $WORKSPACE_PATH"
-        databricks workspace mkdirs "$WORKSPACE_PATH"
+        # Export the function so it's available in find -exec
+        export -f process_notebook
+        export WORKSPACE_BASE
         
-        # Upload the zip file to DBFS
-        echo "Uploading notebooks to DBFS..."
-        databricks fs cp \
-          --overwrite \
-          "$TEMP_DIR/notebooks.zip" \
-          "dbfs:/FileStore/notebooks.zip"
+        # Process all Python files in the notebooks directory
+        echo "Deploying Python notebooks..."
+        find notebooks -name "*.py" -type f -exec bash -c 'process_notebook "$0"' {} \;
         
-        # Unzip the notebooks in the workspace
-        echo "Extracting notebooks to workspace..."
-        databricks workspace import \
-          --language PYTHON \
-          --overwrite \
-          "dbfs:/FileStore/notebooks.zip" \
-          "$WORKSPACE_PATH"
-        
-        # Clean up
-        rm -rf "$TEMP_DIR"
-        databricks fs rm "dbfs:/FileStore/notebooks.zip"
-        
-        echo "✅ Notebooks deployed successfully to $WORKSPACE_PATH"
+        echo "✅ Notebook deployment completed"
         
         # List the deployed notebooks for verification
-        echo "\n📋 Deployed notebooks:"
-        databricks workspace ls "$WORKSPACE_PATH"
+        echo "\n📋 Deployed notebooks in $WORKSPACE_BASE:"
+        databricks workspace ls "$WORKSPACE_BASE"
     
     - name: Run Databricks Job
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
