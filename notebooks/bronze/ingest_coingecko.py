@@ -297,7 +297,8 @@ catalog_name = get_config_value('catalog_name', 'datafusionx_catalog')
 bronze_schema = get_config_value('bronze_schema', 'bronze')
 table_name = "coingecko_raw"
 
-db_manager = DeltaTableManager(spark, catalog_name, bronze_schema, table_name)
+# Inicializa o DeltaTableManager sem o table_name, pois ele será passado em cada operação
+db_manager = DeltaTableManager(spark, catalog_name, bronze_schema)
 
 # COMMAND ----------
 
@@ -436,7 +437,7 @@ def process_and_save_data(data):
             table_name=table_name,
             mode="append",
             merge_schema=True,
-            partition_columns=["pipeline_run_id"]
+            partition_by=["pipeline_run_id"]
         )
         
         # Atualiza métricas
@@ -608,11 +609,9 @@ def main():
             
         print(f"{'='*50}\n")
         
-        # Salva as métricas de execução (opcional)
+        # Salva as métricas de execução
         try:
-            # Aqui você pode adicionar código para salvar as métricas em uma tabela Delta
-            # ou enviar para um sistema de monitoramento
-            pass
+            save_execution_metrics(execution_metrics)
         except Exception as e:
             print(f"Aviso: Não foi possível salvar as métricas de execução: {str(e)}")
         
