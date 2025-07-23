@@ -2,8 +2,7 @@
 import os
 import sys
 import pytest
-import json
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import MagicMock, patch
 from datetime import datetime
 
 # Skip if not running in Databricks
@@ -11,12 +10,6 @@ pytestmark = pytest.mark.skipif(
     'DATABRICKS_RUNTIME_VERSION' not in os.environ,
     reason="Test only runs in Databricks environment"
 )
-
-# Add src to path for imports
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-src_path = os.path.join(project_root, 'src')
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
 
 # Sample test data
 SAMPLE_COIN_DATA = [
@@ -48,127 +41,103 @@ SAMPLE_COIN_DATA = [
     }
 ]
 
-class TestPipelineIntegration:
-    """Test suite for the data pipeline in Databricks environment."""
+@pytest.fixture
+def mock_environment(monkeypatch):
+    """Set up mocks for the Databricks environment."""
+    # Mock the config
+    mock_config = MagicMock()
+    mock_config.catalog_name = os.getenv("CATALOG_NAME")
+    mock_config.bronze_schema = os.getenv("BRONZE_SCHEMA")
+    mock_config.silver_schema = os.getenv("SILVER_SCHEMA")
+    mock_config.gold_schema = os.getenv("GOLD_SCHEMA")
     
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        """Setup test environment."""
-        # Set environment variables if not already set
-        os.environ.setdefault("CATALOG_NAME", "hive_metastore")
-        os.environ.setdefault("BRONZE_SCHEMA", "bronze")
-        os.environ.setdefault("SILVER_SCHEMA", "silver")
-        os.environ.setdefault("GOLD_SCHEMA", "gold")
-        
-        yield
-        
-        # Clean up if needed
-        pass
+    # Mock the Spark session
+    mock_spark = MagicMock()
     
-    @pytest.fixture
-    def mock_environment(self, monkeypatch):
-        """Set up mocks for the Databricks environment."""
-        # Mock the config
-        mock_config = MagicMock()
-        mock_config.catalog_name = os.getenv("CATALOG_NAME")
-        mock_config.bronze_schema = os.getenv("BRONZE_SCHEMA")
-        mock_config.silver_schema = os.getenv("SILVER_SCHEMA")
-        mock_config.gold_schema = os.getenv("GOLD_SCHEMA")
-        
-        # Mock the Spark session
-        mock_spark = MagicMock()
-        
-        # Create a mock DataFrame
-        mock_df = MagicMock()
-        mock_df.count.return_value = len(SAMPLE_COIN_DATA)
-        mock_df.collect.return_value = [MagicMock(id=coin["id"]) for coin in SAMPLE_COIN_DATA]
-        mock_spark.createDataFrame.return_value = mock_df
-        
-        # Mock the DeltaTableManager
-        mock_delta_manager = MagicMock()
-        mock_delta_manager.write_data.return_value = True
-        
-        # Mock the CoinGecko client
-        mock_coingecko = MagicMock()
-        mock_coingecko.get_market_data.return_value = SAMPLE_COIN_DATA
-        
-        # Apply the mocks
-        monkeypatch.setattr('notebooks.bronze.ingest_coingecko.DeltaTableManager', lambda *args, **kwargs: mock_delta_manager)
-        monkeypatch.setattr('notebooks.bronze.ingest_coingecko.spark', mock_spark)
-        monkeypatch.setattr('notebooks.bronze.ingest_coingecko.coingecko', mock_coingecko)
-        monkeypatch.setattr('notebooks.bronze.ingest_coingecko.config', mock_config)
-        
-        # Mock dbutils if not available
-        if 'dbutils' not in globals():
-            mock_dbutils = MagicMock()
-            mock_widgets = MagicMock()
-            mock_widgets.get.return_value = f"test_run_{int(datetime.now().timestamp())}"
-            mock_dbutils.widgets = mock_widgets
-            monkeypatch.setitem(globals(), 'dbutils', mock_dbutils)
-                from datetime import datetime, timedelta
-                dt1 = datetime(self.year, self.month, self.day, self.hour, self.minute, self.second)
-                dt2 = datetime(other.year, other.month, other.day, other.hour, other.minute, other.second)
-                return dt1 - dt2
-                
-            def __str__(self):
-                return f"{self.year}-{self.month:02d}-{self.day:02d} {self.hour:02d}:{self.minute:02d}:{self.second:02d}"
-                
-            def total_seconds(self):
-                # For duration calculation
-                return 0.0
-        
-        # Mock the current_timestamp function
-        self.mock_timestamp = MockDateTime(2023, 1, 1, 0, 0, 0)
-        monkeypatch.setattr('notebooks.bronze.ingest_coingecko.current_timestamp', 
-                          lambda: self.mock_timestamp)
-        
-        # Mock the Spark session
-        mock_spark = MagicMock()
-        mock_spark.createDataFrame.return_value = MagicMock()
-        
-        # Apply the Spark mock
-        monkeypatch.setattr('pyspark.sql.SparkSession.builder.getOrCreate', lambda: mock_spark)
-        
-        # Import the module after setting up the mocks
-        global bronze_main
-        from notebooks.bronze.ingest_coingecko import main as bronze_main
-        
-        yield {
-            'spark': mock_spark,
-            'delta_manager': mock_delta_manager,
-            'client': mock_coingecko,
-            'config': mock_config
-        }
+    # Create a mock DataFrame
+    mock_df = MagicMock()
+    mock_df.count.return_value = len(SAMPLE_COIN_DATA)
+    mock_df.collect.return_value = [MagicMock(id=coin["id"]) for coin in SAMPLE_COIN_DATA]
+    mock_spark.createDataFrame.return_value = mock_df
     
-    def test_bronze_ingestion(self, setup_databricks_environment, capsys):
-        """Test the bronze layer data ingestion in Databricks."""
-        # Get the test environment
-        env = setup_databricks_environment
-        
-        # Import here to ensure we're using the patched version
-        from notebooks.bronze.ingest_coingecko import process_and_save_data
-        
-        # Run the processing function directly
-        result = process_and_save_data(self.test_data)
-        
-        # Verify the result
-        assert isinstance(result, dict)
-        assert "pipeline_status" in result
-        assert "records_processed" in result
-        assert result["records_processed"] > 0
-        
-        # Verify the mock interactions
-        env['client'].get_market_data.assert_not_called()  # Not called because we're calling process_and_save_data directly
-        
-        # Verify the DataFrame was created
-        assert env['spark'].createDataFrame.called if hasattr(env['spark'], 'createDataFrame') else True
-        
-        # Verify the table was created with the correct name
-        assert mock_delta_manager.write_data.call_args[1]['table_name'] == "coin_gecko_market_data"
-        
-        # Verify the captured output contains expected error message
-        captured = capsys.readouterr()
-        assert "ERRO NO PIPELINE" in captured.out
-        
-        # Print debug information
-        print("Test completed successfully")
+    # Mock the DeltaTableManager
+    mock_delta_manager = MagicMock()
+    mock_delta_manager.write_data.return_value = True
+    
+    # Mock the CoinGecko client
+    mock_coingecko = MagicMock()
+    mock_coingecko.get_market_data.return_value = SAMPLE_COIN_DATA
+    
+    # Apply the mocks
+    monkeypatch.setattr('notebooks.bronze.ingest_coingecko.DeltaTableManager', 
+                      lambda *args, **kwargs: mock_delta_manager)
+    monkeypatch.setattr('notebooks.bronze.ingest_coingecko.spark', mock_spark)
+    monkeypatch.setattr('notebooks.bronze.ingest_coingecko.coingecko', mock_coingecko)
+    monkeypatch.setattr('notebooks.bronze.ingest_coingecko.config', mock_config)
+    
+    # Mock dbutils if not available
+    if 'dbutils' not in globals():
+        mock_dbutils = MagicMock()
+        mock_widgets = MagicMock()
+        mock_widgets.get.return_value = f"test_run_{int(datetime.now().timestamp())}"
+        mock_dbutils.widgets = mock_widgets
+        monkeypatch.setitem(globals(), 'dbutils', mock_dbutils)
+    
+    # Mock the current_timestamp function
+    mock_timestamp = MagicMock()
+    mock_timestamp.cast.return_value = 1000
+    monkeypatch.setattr('notebooks.bronze.ingest_coingecko.current_timestamp', 
+                      lambda: mock_timestamp)
+    
+    return {
+        'spark': mock_spark,
+        'delta_manager': mock_delta_manager,
+        'coingecko': mock_coingecko,
+        'config': mock_config,
+        'test_df': mock_df,
+        'dbutils': mock_dbutils if 'dbutils' not in globals() else globals()['dbutils']
+    }
+
+def test_bronze_ingestion_process_data(mock_environment):
+    """Test the bronze layer data processing."""
+    # Import inside test to ensure mocks are in place
+    from notebooks.bronze.ingest_coingecko import process_and_save_data
+    
+    # Run the processing function
+    result = process_and_save_data(SAMPLE_COIN_DATA)
+    
+    # Verify the result structure
+    assert isinstance(result, dict)
+    assert "pipeline_status" in result
+    assert "records_processed" in result
+    assert result["records_processed"] == len(SAMPLE_COIN_DATA)
+    
+    # Verify the mock interactions
+    mock_environment['coingecko'].get_market_data.assert_not_called()
+    mock_environment['spark'].createDataFrame.assert_called_once()
+    
+    # Verify the Delta manager was called with the correct parameters
+    assert mock_environment['delta_manager'].write_data.call_count == 1
+    call_args = mock_environment['delta_manager'].write_data.call_args[1]
+    assert call_args['table_name'] == "coingecko_raw"
+    assert call_args['mode'] == "append"
+    assert call_args['merge_schema'] == True
+
+def test_bronze_ingestion_main(mock_environment):
+    """Test the main bronze ingestion function."""
+    # Import inside test to ensure mocks are in place
+    from notebooks.bronze.ingest_coingecko import main as bronze_main
+    
+    # Run the main function
+    result = bronze_main()
+    
+    # Verify the result structure
+    assert isinstance(result, dict)
+    assert "pipeline_status" in result
+    assert "records_processed" in result
+    
+    # Verify the CoinGecko API was called
+    mock_environment['coingecko'].get_market_data.assert_called_once()
+    
+    # Verify the Delta manager was called
+    assert mock_environment['delta_manager'].write_data.call_count == 1
