@@ -44,27 +44,33 @@ jobs:
     - name: Configure Databricks CLI
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
       run: |
-        # Create .databricks directory if it doesn't exist
-        mkdir -p $HOME/.databricks
+        # Create config directory and file with full path
+        CONFIG_DIR="$HOME/.databricks"
+        CONFIG_FILE="$CONFIG_DIR/config"
+        mkdir -p "$CONFIG_DIR"
         
-        # Ensure the config file path exists and is writable
-        touch $HOME/.databrickscfg
-        chmod 600 $HOME/.databrickscfg
+        # Write configuration with proper formatting
+        echo "[DEFAULT]" > "$CONFIG_FILE"
+        echo "host = ${{ secrets.DATABRICKS_HOST }}" >> "$CONFIG_FILE"
+        echo "token = ${{ secrets.DATABRICKS_TOKEN }}" >> "$CONFIG_FILE"
+        echo "jobs-api-version = 2.1" >> "$CONFIG_FILE"
         
-        # Write the configuration
-        cat > $HOME/.databrickscfg <<EOL
-        [DEFAULT]
-        host = ${{ secrets.DATABRICKS_HOST }}
-        token = ${{ secrets.DATABRICKS_TOKEN }}
-        jobs-api-version = 2.1
-        EOL
+        # Set permissions
+        chmod 600 "$CONFIG_FILE"
         
         # Verify the configuration
-        echo "Databricks configuration:"
-        cat $HOME/.databrickscfg
+        echo "=== Databricks Configuration ==="
+        cat "$CONFIG_FILE"
+        echo "==============================="
         
-        # Set environment variable to point to the config file
-        echo "DATABRICKS_CONFIG_FILE=$HOME/.databrickscfg" >> $GITHUB_ENV
+        # Set environment variables
+        echo "DATABRICKS_CONFIG_FILE=$CONFIG_FILE" >> $GITHUB_ENV
+        echo "DATABRICKS_CONFIG_PROFILE=DEFAULT" >> $GITHUB_ENV
+        
+        # Verify databricks-cli is installed
+        echo "=== Databricks CLI Version ==="
+        databricks --version || echo "Failed to get databricks-cli version"
+        echo "============================"
         
     - name: Deploy Notebooks to Databricks
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
