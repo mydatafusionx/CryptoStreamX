@@ -43,34 +43,23 @@ jobs:
     
     - name: Configure Databricks CLI
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      env:
+        DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+        DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
       run: |
-        # Create config directory and file with full path
-        CONFIG_DIR="$HOME/.databricks"
-        CONFIG_FILE="$CONFIG_DIR/config"
-        mkdir -p "$CONFIG_DIR"
-        
-        # Write configuration with proper formatting
-        echo "[DEFAULT]" > "$CONFIG_FILE"
-        echo "host = ${{ secrets.DATABRICKS_HOST }}" >> "$CONFIG_FILE"
-        echo "token = ${{ secrets.DATABRICKS_TOKEN }}" >> "$CONFIG_FILE"
-        echo "jobs-api-version = 2.1" >> "$CONFIG_FILE"
-        
-        # Set permissions
-        chmod 600 "$CONFIG_FILE"
-        
-        # Verify the configuration
-        echo "=== Databricks Configuration ==="
-        cat "$CONFIG_FILE"
-        echo "==============================="
-        
-        # Set environment variables
-        echo "DATABRICKS_CONFIG_FILE=$CONFIG_FILE" >> $GITHUB_ENV
-        echo "DATABRICKS_CONFIG_PROFILE=DEFAULT" >> $GITHUB_ENV
+        # Verify environment variables are set
+        echo "=== Verifying Environment Variables ==="
+        echo "DATABRICKS_HOST is set: ${#DATABRICKS_HOST} characters"
+        echo "DATABRICKS_TOKEN is set: ${#DATABRICKS_TOKEN} characters"
         
         # Verify databricks-cli is installed
         echo "=== Databricks CLI Version ==="
         databricks --version || echo "Failed to get databricks-cli version"
-        echo "============================"
+        
+        # Test databricks-cli connectivity
+        echo "=== Testing Databricks Connectivity ==="
+        databricks clusters list || echo "Failed to list clusters"
+        echo "===================================="
         
     - name: Deploy Notebooks to Databricks
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
