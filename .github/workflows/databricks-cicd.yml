@@ -1,0 +1,44 @@
+name: Databricks CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install databricks-cli
+        
+    - name: Run tests
+      run: |
+        python -m pytest tests/ -v --cov=.
+        
+    - name: Deploy to Databricks
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      uses: databricks/run-notebook@v1
+      with:
+        local-notebook-path: 'notebooks/'
+        workspace-folder: '/Repos/DataFusionX/CryptoStreamX/notebooks'
+        databricks-host: ${{ secrets.DATABRICKS_HOST }}
+        databricks-token: ${{ secrets.DATABRICKS_TOKEN }}
+        
+    - name: Run Databricks Job
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      run: |
+        databricks jobs run-now --job-id ${{ secrets.DATABRICK_JOB_ID }} --token ${{ secrets.DATABRICKS_TOKEN }} --host ${{ secrets.DATABRICKS_HOST }}

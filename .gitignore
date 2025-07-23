@@ -1,0 +1,82 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Databricks
+.databricks/
+.workspace/
+.assets/
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.coverage.*
+
+# Environment variables
+.env
+
+# Local development
+local_settings.py
+
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Delta Lake
+_delta_log/
+
+# Databricks Connect
+.databricks-connect
+
+# Project specific
+notebooks/*.py
+!notebooks/**/*.py
+!notebooks/**/*.sql
+!notebooks/**/*.json
