@@ -65,24 +65,24 @@ jobs:
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
       run: |
         # Define the target workspace path
-        WORKSPACE_PATH="/Users/lnunesvalle@gmail.com/DataFusionX/notebooks"
+        WORKSPACE_PATH="/Users/lnunesvalle@gmail.com/DataFusionX"
         
         # Create target directory in user's workspace
         echo "Creating directory: $WORKSPACE_PATH"
         databricks workspace mkdirs "$WORKSPACE_PATH"
         
-        # Deploy all notebooks from the notebooks directory
+        # Use import_dir to copy the entire notebooks directory
         echo "Deploying notebooks to Databricks workspace..."
-        for notebook in notebooks/*.py; do
-          if [ -f "$notebook" ]; then
-            notebook_name=$(basename "$notebook")
-            dest_path="$WORKSPACE_PATH/$notebook_name"
-            echo "Deploying $notebook to $dest_path"
-            databricks workspace import --language PYTHON --overwrite "$notebook" "$dest_path"
-          fi
-        done
+        databricks workspace import_dir \
+          --overwrite \
+          "notebooks" \
+          "$WORKSPACE_PATH/notebooks"
         
-        echo "✅ Notebooks deployed successfully to $WORKSPACE_PATH"
+        echo "✅ Notebooks deployed successfully to $WORKSPACE_PATH/notebooks"
+        
+        # List the deployed notebooks for verification
+        echo "\n📋 Deployed notebooks:"
+        databricks workspace ls "$WORKSPACE_PATH/notebooks"
     
     - name: Run Databricks Job
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
