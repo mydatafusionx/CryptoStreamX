@@ -125,7 +125,7 @@ class DeltaTableManager:
         if "ingestion_timestamp" not in df.columns:
             df = df.withColumn("ingestion_timestamp", current_timestamp())
         
-        if "pipeline_run_id" not in df.columns and "pipeline_run_id" in df.columns:
+        if "pipeline_run_id" not in df.columns:
             # You can set a proper run ID here, e.g., from environment variable
             df = df.withColumn("pipeline_run_id", lit("manual_run"))
         
