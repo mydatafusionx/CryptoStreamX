@@ -32,9 +32,8 @@ jobs:
         pip install -e .
         
         # Configure Python path for tests
-        echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
         
-    - name: Install Databricks CLI with pip
+    - name: Install Dependencies
       run: |
         # Install the latest pre-release version of Databricks CLI
         echo "Installing Databricks CLI with pip..."
@@ -42,6 +41,9 @@ jobs:
         
         # Install SQL CLI extension
         pip install --upgrade databricks-sql-cli
+        
+        # Install project in development mode
+        pip install -e .
         
         # Verify installation
         echo "=== Installed CLI versions ==="
@@ -55,6 +57,10 @@ jobs:
         ' > test_sql_cli.sh
         chmod +x test_sql_cli.sh
         ./test_sql_cli.sh
+        
+        # Verify Python can import the utils package
+        python -c "import sys; print('\n'.join(sys.path))"
+        python -c "from utils.api_client import CoinGeckoClient; print('Successfully imported CoinGeckoClient')" || echo "Failed to import utils"
         
     - name: Run basic tests
       run: |
