@@ -131,6 +131,13 @@ class DeltaTableManager:
             # You can set a proper run ID here, e.g., from environment variable
             df = df.withColumn("pipeline_run_id", lit("manual_run"))
         
+        # Create table if it doesn't exist
+        if not self.table_exists(table_name):
+            logger.info(f"Table {full_table_name} does not exist. Creating it...")
+            # Create the table with the DataFrame's schema
+            self.spark.sql(f"CREATE TABLE {full_table_name} USING DELTA AS SELECT * FROM df WHERE 1=0")
+            logger.info(f"Table {full_table_name} created successfully.")
+        
         # Write the DataFrame
         writer = df.write.format("delta")
         
@@ -143,9 +150,19 @@ class DeltaTableManager:
         if overwrite_schema:
             writer = writer.option("overwriteSchema", "true")
         
-        writer.mode(mode).saveAsTable(full_table_name)
-        
-        logger.info(f"Successfully wrote {df.count()} rows to {full_table_name} in {mode} mode")
+        # Add error handling for the write operation
+        try:
+            writer.mode(mode).saveAsTable(full_table_name)
+            logger.info(f"Successfully wrote {df.count()} rows to {full_table_name} in {mode} mode")
+        except Exception as e:
+            logger.error(f"Error writing to table {full_table_name}: {str(e)}")
+            # If the error is related to schema mismatch and we're not already merging schemas, try with mergeSchema
+            if "schema mismatch" in str(e).lower() and not merge_schema:
+                logger.info("Retrying with mergeSchema=True...")
+                writer.option("mergeSchema", "true").mode(mode).saveAsTable(full_table_name)
+                logger.info(f"Successfully wrote {df.count()} rows to {full_table_name} with mergeSchema=True")
+            else:
+                raise
         
         # Optimize the table after write if it's an overwrite operation
         if mode.lower() == "overwrite" and partition_by:
