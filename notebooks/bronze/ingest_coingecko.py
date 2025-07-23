@@ -295,11 +295,9 @@ def get_config_value(key, default=None):
 # Inicializa o gerenciador de tabelas Delta
 catalog_name = get_config_value('catalog_name', 'datafusionx_catalog')
 bronze_schema = get_config_value('bronze_schema', 'bronze')
-
-db_manager = DeltaTableManager(spark, catalog_name, bronze_schema)
-
-# Define o nome da tabela
 table_name = "coingecko_raw"
+
+db_manager = DeltaTableManager(spark, catalog_name, bronze_schema, table_name)
 
 # COMMAND ----------
 
