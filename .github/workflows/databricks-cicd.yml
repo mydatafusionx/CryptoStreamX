@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+  DATABRICKS_CONFIG_FILE: "$HOME/.databrickscfg"
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -28,20 +33,50 @@ jobs:
     - name: Run tests
       run: |
         python -m pytest tests/ -v --cov=.
-        
-    - name: Deploy to Databricks
+    
+    - name: Configure Databricks CLI
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-      uses: databricks/run-notebook@v1
-      with:
-        local-notebook-path: 'notebooks/'
-        workspace-folder: '/Repos/DataFusionX/CryptoStreamX/notebooks'
-        databricks-host: ${{ secrets.DATABRICKS_HOST }}
-        databricks-token: ${{ secrets.DATABRICKS_TOKEN }}
+      run: |
+        mkdir -p ~/.databricks
+        echo "[DEFAULT]" > $DATABRICKS_CONFIG_FILE
+        echo "host = $DATABRICKS_HOST" >> $DATABRICKS_CONFIG_FILE
+        echo "token = $DATABRICKS_TOKEN" >> $DATABRICKS_CONFIG_FILE
+        echo "jobs-api-version = 2.1" >> $DATABRICKS_CONFIG_FILE
         
+    - name: Deploy Notebooks to Databricks
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      run: |
+        # Create directory structure if it doesn't exist
+        databricks workspace mkdirs /Repos/DataFusionX/CryptoStreamX/notebooks
+        
+        # Deploy all notebooks
+        for notebook in notebooks/**/*.py notebooks/**/*.ipynb; do
+          if [ -f "$notebook" ]; then
+            echo "Deploying $notebook..."
+            dest_path="/Repos/DataFusionX/CryptoStreamX/notebooks/$(basename $notebook)"
+            databricks workspace import --language PYTHON --overwrite "$notebook" "$dest_path"
+          fi
+        done
+        
+        echo "Notebooks deployed successfully!"
+    
     - name: Run Databricks Job
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-      env:
-        DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-        DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
       run: |
-        databricks jobs run-now --job-id ${{ secrets.DATABRICKS_JOB_ID }}
+        # Get the job ID from the workflow file
+        JOB_ID=$(jq -r '.job_id' workflows/pipeline_job.json)
+        
+        if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ]; then
+          echo "No job ID found in pipeline_job.json. Trying to get job by name..."
+          JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[] | select(.settings.name == "crypto_data_pipeline") | .job_id' | head -n 1)
+        fi
+        
+        if [ -z "$JOB_ID" ]; then
+          echo "Error: Could not find job ID. Please check your pipeline_job.json file or create the job manually."
+          exit 1
+        fi
+        
+        echo "Running Databricks job with ID: $JOB_ID"
+        databricks jobs run-now --job-id $JOB_ID
+        
+        echo "Job started successfully!"
