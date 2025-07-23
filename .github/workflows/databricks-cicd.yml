@@ -65,24 +65,44 @@ jobs:
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
       run: |
         # Define the target workspace path
-        WORKSPACE_PATH="/Users/lnunesvalle@gmail.com/DataFusionX"
+        WORKSPACE_PATH="/Users/lnunesvalle@gmail.com/DataFusionX/notebooks"
         
-        # Create target directory in user's workspace
+        # Create a temporary directory for the notebooks
+        TEMP_DIR=$(mktemp -d)
+        cp -r notebooks/* "$TEMP_DIR/"
+        
+        # Create a zip file of the notebooks
+        cd "$TEMP_DIR"
+        zip -r notebooks.zip ./*
+        
+        # Create the target directory
         echo "Creating directory: $WORKSPACE_PATH"
         databricks workspace mkdirs "$WORKSPACE_PATH"
         
-        # Use import_dir to copy the entire notebooks directory
-        echo "Deploying notebooks to Databricks workspace..."
-        databricks workspace import_dir \
+        # Upload the zip file to DBFS
+        echo "Uploading notebooks to DBFS..."
+        databricks fs cp \
           --overwrite \
-          "notebooks" \
-          "$WORKSPACE_PATH/notebooks"
+          "$TEMP_DIR/notebooks.zip" \
+          "dbfs:/FileStore/notebooks.zip"
         
-        echo "✅ Notebooks deployed successfully to $WORKSPACE_PATH/notebooks"
+        # Unzip the notebooks in the workspace
+        echo "Extracting notebooks to workspace..."
+        databricks workspace import \
+          --language PYTHON \
+          --overwrite \
+          "dbfs:/FileStore/notebooks.zip" \
+          "$WORKSPACE_PATH"
+        
+        # Clean up
+        rm -rf "$TEMP_DIR"
+        databricks fs rm "dbfs:/FileStore/notebooks.zip"
+        
+        echo "✅ Notebooks deployed successfully to $WORKSPACE_PATH"
         
         # List the deployed notebooks for verification
         echo "\n📋 Deployed notebooks:"
-        databricks workspace ls "$WORKSPACE_PATH/notebooks"
+        databricks workspace ls "$WORKSPACE_PATH"
     
     - name: Run Databricks Job
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
