@@ -24,16 +24,25 @@ jobs:
       with:
         python-version: '3.9'
         
-    - name: Install dependencies
+    - name: Install Python dependencies
       run: |
-        # Install Python dependencies
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov pyspark delta-spark pyyaml python-dotenv "databricks-cli>=0.205.0"
+        pip install pytest pytest-cov pyspark delta-spark pyyaml python-dotenv
         pip install -e .
         
         # Configure Python path for tests
         echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+        
+    - name: Install Databricks CLI (latest)
+      run: |
+        # Install the new Databricks CLI
+        curl -fsSL https://raw.githubusercontent.com/databricks/cli/main/install.sh | sh
+        echo "$HOME/.databricks/bin" >> $GITHUB_PATH
+        
+        # Verify installation
+        echo "Databricks CLI version:"
+        $HOME/.databricks/bin/databricks --version
         
     - name: Run basic tests
       run: |
