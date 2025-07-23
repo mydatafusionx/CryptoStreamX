@@ -28,7 +28,14 @@ from pyspark.sql.types import (
 )
 
 # Adiciona o diretório raiz ao path para importar módulos
-sys.path.append('/Workspace/Repos/DataFusionX/CryptoStreamX/src')
+import os
+import sys
+
+# Adiciona o diretório src ao path para importações locais
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+src_path = os.path.join(project_root, 'src')
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
 # Importações personalizadas
 from utils.api_client import CoinGeckoClient
