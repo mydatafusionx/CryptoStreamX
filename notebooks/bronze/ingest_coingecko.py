@@ -35,58 +35,97 @@ import sys
 import os
 import sys
 
+print("=== Configurando PYTHONPATH ===")
+print(f"Diretório de trabalho atual: {os.getcwd()}")
+
 # Tenta várias abordagens para encontrar o diretório src
 possible_paths = []
 
 try:
-    # 1. Tenta a abordagem local
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    possible_paths.append(project_root)  # Raiz do projeto
-    possible_paths.append(os.path.join(project_root, 'src'))  # Diretório src
-    
-    # 2. Tenta a abordagem do Databricks
+    # 1. Tenta a abordagem do Databricks primeiro
     try:
         notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-        db_project_root = '/Workspace' + os.path.dirname(os.path.dirname(os.path.dirname(notebook_path)))
-        possible_paths.append(db_project_root)  # Raiz do projeto no Databricks
-        possible_paths.append(os.path.join(db_project_root, 'src'))  # Diretório src no Databricks
+        print(f"Caminho do notebook: {notebook_path}")
+        
+        # Remove o nome do notebook para obter o diretório
+        notebook_dir = os.path.dirname(notebook_path)
+        
+        # Navega para cima até a raiz do projeto (assumindo estrutura notebooks/bronze/...)
+        project_root = '/Workspace' + os.path.dirname(notebook_dir)  # Remove 'bronze'
+        project_root = os.path.dirname(project_root)  # Remove 'notebooks'
+        
+        src_path = os.path.join(project_root, 'src')
+        
+        print(f"Raiz do projeto detectada: {project_root}")
+        print(f"Caminho src detectado: {src_path}")
+        
+        possible_paths.append(project_root)
+        possible_paths.append(src_path)
+        
     except Exception as e:
         print(f"Aviso: Não foi possível obter o caminho do notebook no Databricks: {str(e)}")
-        
-    # 3. Tenta o diretório de trabalho atual
-    possible_paths.append(os.getcwd())
-    possible_paths.append(os.path.join(os.getcwd(), 'src'))
     
-    # 4. Tenta o diretório pai
-    parent_dir = os.path.dirname(os.getcwd())
-    possible_paths.append(parent_dir)
-    possible_paths.append(os.path.join(parent_dir, 'src'))
+    # 2. Tenta caminhos padrão relativos
+    default_paths = [
+        '/Workspace/Repos',  # Para Databricks Repos
+        '/dbfs/FileStore',   # Para arquivos no DBFS
+        '/databricks/driver',
+        '/databricks/spark/python',
+        os.getcwd(),
+        os.path.join(os.getcwd(), 'src'),
+        os.path.dirname(os.getcwd()),
+        os.path.join(os.path.dirname(os.getcwd()), 'src')
+    ]
+    
+    for path in default_paths:
+        if path not in possible_paths:
+            possible_paths.append(path)
     
     # Adiciona todos os caminhos possíveis ao PYTHONPATH
     added_paths = []
     for path in possible_paths:
-        if os.path.exists(path) and path not in sys.path:
-            sys.path.insert(0, path)
-            added_paths.append(path)
+        if path and path not in sys.path:
+            try:
+                if os.path.exists(path):
+                    sys.path.insert(0, path)
+                    added_paths.append(path)
+            except Exception as e:
+                print(f"Aviso: Erro ao adicionar {path} ao PYTHONPATH: {str(e)}")
     
-    print("Caminhos adicionados ao PYTHONPATH:")
+    print("\nCaminhos adicionados ao PYTHONPATH:")
     for path in added_paths:
         print(f"- {path}")
-        
+    
+    print("\nCaminhos de busca atuais (PYTHONPATH):")
+    for i, path in enumerate(sys.path[:10]):  # Mostra apenas os 10 primeiros para não poluir
+        print(f"{i}. {path}")
+    if len(sys.path) > 10:
+        print(f"... e mais {len(sys.path) - 10} caminhos")
+    
     # Verifica se o módulo utils pode ser importado
+    print("\nTentando importar o módulo 'utils'...")
     try:
         import utils
         print("✅ Módulo 'utils' importado com sucesso!")
-        print(f"Localização: {utils.__file__}")
+        try:
+            print(f"Localização: {utils.__file__}")
+        except:
+            print("Não foi possível determinar a localização do módulo")
     except ImportError as e:
         print("❌ Não foi possível importar o módulo 'utils'")
-        print("Caminhos de busca atuais:")
+        print(f"Erro: {str(e)}")
+        print("\nVerificando se o diretório 'utils' existe nos caminhos...")
         for path in sys.path:
-            print(f"- {path}")
+            utils_path = os.path.join(path, 'utils')
+            print(f"- {utils_path}: {'Existe' if os.path.exists(utils_path) else 'Não existe'}")
         raise
         
 except Exception as e:
-    print(f"Erro ao configurar o PYTHONPATH: {str(e)}")
+    print(f"\n❌ Erro ao configurar o PYTHONPATH: {str(e)}")
+    print("\nVariáveis de ambiente:")
+    for key, value in os.environ.items():
+        if 'PYTHON' in key or 'PATH' in key:
+            print(f"{key}={value}")
     raise
 
 # Importações personalizadas
