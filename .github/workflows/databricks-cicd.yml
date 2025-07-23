@@ -114,12 +114,47 @@ jobs:
         
         echo "🚀 Starting Databricks job for notebook: $MAIN_NOTEBOOK_PATH"
         
-        # Run the notebook directly
-        databricks jobs submit \
-          --python-task "$MAIN_NOTEBOOK_PATH" \
-          --existing-cluster-id ${{ secrets.DATABRICKS_CLUSTER_ID }} \
-          --name "Crypto Data Pipeline - $(date +'%Y%m%d-%H%M%S')" \
-          --timeout 3600 \
-          --max-retries 1
+        # Create a temporary job configuration
+        JOB_CONFIG=$(cat <<EOF
+        {
+          "name": "Crypto Data Pipeline - $(date +'%Y%m%d-%H%M%S')",
+          "existing_cluster_id": "${{ secrets.DATABRICKS_CLUSTER_ID }}",
+          "libraries": [
+            {
+              "pypi": {
+                "package": "requests"
+              }
+            }
+          ],
+          "notebook_task": {
+            "notebook_path": "$MAIN_NOTEBOOK_PATH",
+            "source": "WORKSPACE"
+          },
+          "max_retries": 1,
+          "timeout_seconds": 3600
+        }
+        EOF
+        )
         
-        echo "✅ Job submitted successfully!"
+        # Create and run the job
+        echo "Creating and running Databricks job..."
+        JOB_ID=$(databricks jobs create --json "$JOB_CONFIG" | jq -r '.job_id')
+        
+        if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ]; then
+          echo "❌ Failed to create job"
+          exit 1
+        fi
+        
+        echo "✅ Job created with ID: $JOB_ID"
+        echo "🚀 Starting job run..."
+        
+        # Run the job
+        RUN_ID=$(databricks jobs run-now --job-id "$JOB_ID" | jq -r '.run_id')
+        
+        if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+          echo "❌ Failed to start job run"
+          exit 1
+        fi
+        
+        echo "✅ Job run started with ID: $RUN_ID"
+        echo "🔗 View the run in Databricks: ${{ secrets.DATABRICKS_HOST }}#job/$JOB_ID/run/$RUN_ID"
