@@ -379,7 +379,7 @@ def process_and_save_data(data):
             raise ValueError(f"Colunas obrigatórias ausentes: {', '.join(missing_required)}")
         
         # Adiciona metadados de ingestão
-        run_id = dbutils.widgets.get("run_id") if dbutils.widgets.get("run_id") else "manual_run_" + str(int(time.time()))
+        run_id = run_id  # Use the run_id from the main function
         
         df = (df
               .withColumn("ingestion_timestamp", current_timestamp())
@@ -506,11 +506,19 @@ def main():
     is_databricks = 'dbutils' in globals()
     
     # Gera um run_id baseado no ambiente
-    run_id = None
-    if is_databricks and dbutils.widgets.get("run_id"):
-        run_id = dbutils.widgets.get("run_id")
-    else:
-        run_id = f"local_run_{int(time.time())}"
+    run_id = f"manual_run_{int(time.time())}"  # Default run_id
+    
+    try:
+        if is_databricks:
+            # Try to get run_id from widget, create it if it doesn't exist
+            try:
+                run_id = dbutils.widgets.get("run_id")
+            except Exception:
+                # Widget doesn't exist, create it with a default value
+                dbutils.widgets.text("run_id", run_id, "Run ID")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not access Databricks widgets: {str(e)}")
+        print(f"Using default run_id: {run_id}")
     
     execution_metrics = {
         'pipeline_start_time': current_timestamp(),
