@@ -173,5 +173,19 @@ jobs:
           --query "SELECT * FROM example_table" \
           --output JSON || echo "Warning: Failed to query data"
         
+        # List all tables in the default schema
+        echo "🔍 Listing all tables in the default schema:"
+        databricks sql query execute \
+          --warehouse-id "$WAREHOUSE_ID" \
+          --query "SHOW TABLES IN default" \
+          --output JSON || echo "Warning: Failed to list tables"
+        
+        # Show table details
+        echo "🔍 Showing table details (if exists):"
+        databricks sql query execute \
+          --warehouse-id "$WAREHOUSE_ID" \
+          --query "DESCRIBE TABLE EXTENDED default.example_table" \
+          --output JSON || echo "Warning: Table might not exist or you don't have permission to view it"
+        
         echo "✅ SQL execution completed!"
         echo "🔗 View your SQL Warehouse: ${{ secrets.DATABRICKS_HOST }}#sql/warehouses/$WAREHOUSE_ID"
