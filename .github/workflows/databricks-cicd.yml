@@ -34,12 +34,21 @@ jobs:
         # Configure Python path for tests
         echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
         
-    - name: Install Databricks CLI (v0.205+)
+    - name: Install Databricks CLI
       run: |
-        # Download and install the latest Databricks CLI
-        curl -fsSL https://github.com/databricks/cli/releases/latest/download/databricks_linux_amd64 -o databricks
+        # Install prerequisites
+        sudo apt-get update
+        sudo apt-get install -y wget unzip
+        
+        # Download specific version of Databricks CLI
+        VERSION="0.205.0"
+        echo "Installing Databricks CLI version $VERSION"
+        
+        # Download and install the Databricks CLI
+        wget -q https://github.com/databricks/cli/releases/download/v${VERSION}/databricks_cli_${VERSION}_linux_amd64.zip
+        unzip databricks_cli_${VERSION}_linux_amd64.zip
         chmod +x databricks
-        sudo mv databricks /usr/local/bin/databricks
+        sudo mv databricks /usr/local/bin/
         
         # Verify installation
         echo "Databricks CLI version:"
