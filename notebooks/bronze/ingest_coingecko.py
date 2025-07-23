@@ -64,26 +64,58 @@ with tempfile.TemporaryDirectory() as temp_dir:
     print("3. Criando arquivos necessários...")
     
     # api_client.py
-    api_client_content = """
-# api_client.py simplificado
-class CoinGeckoClient:
-    def __init__(self):
-        self.base_url = "https://api.coingecko.com/api/v3"
-        
-    def get_coin_markets(self, vs_currency='usd', **kwargs):
-        # Implementação simplificada
-        return [{"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}]
-"""
+    api_client_content = [
+        '# api_client.py simplificado',
+        'import requests',
+        '',
+        'class CoinGeckoClient:',
+        '    def __init__(self):',
+        '        self.base_url = "https://api.coingecko.com/api/v3"',
+        '        self.session = requests.Session()',
+        '        ', 
+        '    def get_coin_markets(self, vs_currency="usd", **kwargs):',
+        '        """Obtém dados de mercado para criptomoedas."""',
+        '        endpoint = "{}/coins/markets".format(self.base_url)',
+        '        params = {',
+        '            "vs_currency": vs_currency,',
+        '            "order": "market_cap_desc",',
+        '            "per_page": 100,',
+        '            "page": 1,',
+        '            "sparkline": False,',
+        '        }',
+        '        params.update(kwargs)',
+        '        ', 
+        '        try:',
+        '            response = self.session.get(endpoint, params=params)',
+        '            response.raise_for_status()',
+        '            return response.json()',
+        '        except requests.RequestException as e:',
+        '            print("Erro ao buscar dados da API: {}".format(str(e)))',
+        '            return []',
+        '            ', 
+        '    def get_market_data(self, vs_currency="usd", **kwargs):',
+        '        """Método alternativo para compatibilidade."""',
+        '        return self.get_coin_markets(vs_currency, **kwargs)'
+    ]
+    
     with open(os.path.join(utils_dir, 'api_client.py'), 'w') as f:
-        f.write(api_client_content.strip())
+        f.write('\n'.join(api_client_content))
     
     # config.py
     config_content = """
 # config.py simplificado
 config = {
+    "catalog_name": "hive_metastore",
+    "bronze_schema": "bronze",
+    "silver_schema": "silver",
+    "gold_schema": "gold",
     "database": {
         "path": "/dbfs/FileStore/tables/crypto_data",
         "format": "delta"
+    },
+    "api": {
+        "retries": 3,
+        "timeout": 30
     }
 }
 """
@@ -91,20 +123,45 @@ config = {
         f.write(config_content.strip())
     
     # db_utils.py
-    db_utils_content = """
-# db_utils.py simplificado
-class DeltaTableManager:
-    def __init__(self, spark, path, schema=None):
-        self.spark = spark
-        self.path = path
-        self.schema = schema
-    
-    def write_dataframe(self, df, mode="overwrite"):
-        # Implementação simplificada
-        df.write.format("delta").mode(mode).save(self.path)
-"""
+    db_utils_content = [
+        '# db_utils.py simplificado',
+        'class DeltaTableManager:',
+        '    def __init__(self, spark, catalog_name, schema_name, table_name):',
+        '        self.spark = spark',
+        '        self.catalog_name = catalog_name',
+        '        self.schema_name = schema_name',
+        '        self.table_name = table_name',
+        '        self.full_table_name = "{}.{}.{}".format(',
+        '            catalog_name, schema_name, table_name',
+        '        )',
+        '        self.path = "dbfs:/user/hive/warehouse/{}.db/{}".format(',
+        '            schema_name, table_name',
+        '        )',
+        '    ', 
+        '    def write_dataframe(self, df, mode="overwrite"):',
+        '        """Salva o DataFrame como uma tabela Delta."""',
+        '        writer = df.write.format("delta")',
+        '        writer = writer.mode(mode)',
+        '        writer = writer.option("path", self.path)',
+        '        writer.saveAsTable(self.full_table_name)',
+        '    ', 
+        '    def read_table(self):',
+        '        """Lê a tabela Delta."""',
+        '        return self.spark.read.table(self.full_table_name)',
+        '    ', 
+        '    def table_exists(self):',
+        '        """Verifica se a tabela existe."""',
+        '        from pyspark.sql.utils import AnalysisException',
+        '        try:',
+        '            self.spark.sql(',
+        '                "DESCRIBE TABLE {}".format(self.full_table_name)',
+        '            )',
+        '            return True',
+        '        except AnalysisException:',
+        '            return False'
+    ]
     with open(os.path.join(utils_dir, 'db_utils.py'), 'w') as f:
-        f.write(db_utils_content.strip())
+        f.write('\n'.join(db_utils_content))
     
     print("4. Arquivos criados com sucesso!")
     
