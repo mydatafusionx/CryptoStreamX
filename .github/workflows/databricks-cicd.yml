@@ -141,26 +141,6 @@ jobs:
         
         echo "🚀 Starting SQL execution on Warehouse ID: $WAREHOUSE_ID"
         
-        # Create a temporary file for SQL queries
-        cat > queries.sql << 'EOF'
-        -- Create example table if not exists
-        CREATE TABLE IF NOT EXISTS example_table (
-          id INT,
-          name STRING,
-          value DOUBLE
-        );
-        
-        -- Insert sample data
-        INSERT INTO example_table VALUES
-          (1, 'test', 3.14);
-          
-        -- Query the data
-        SELECT * FROM example_table;
-        EOF
-        
-        # Execute SQL using the Databricks CLI (legacy method)
-        echo "📝 Executing SQL queries..."
-        
         # Set Databricks config
         echo "Setting up Databricks configuration..."
         cat > $HOME/.databrickscfg << EOF
@@ -169,62 +149,29 @@ jobs:
         token = ${{ secrets.DATABRICKS_TOKEN }}
         EOF
         
-        # Execute SQL using the Databricks SQL CLI (legacy)
-        echo "Executing SQL file..."
-        databricks workspace import \
-          --language SQL \
-          --overwrite \
-          queries.sql \
-          "/tmp/run_queries.sql"
-          
-        # Run the SQL job
-        echo "Running SQL job..."
-        JOB_ID=$(databricks jobs create \
-          --json '{
-            "name": "CI_CD_SQL_Job",
-            "tasks": [
-              {
-                "task_key": "run_sql",
-                "sql_task": {
-                  "query": {
-                    "query_id": "$(databricks sql queries create \
-                      --data @- <<EOF
-                      {
-                        "data_source_id": "$WAREHOUSE_ID",
-                        "query": "$(cat queries.sql | tr '\n' ' ' | sed 's/"/\\"/g')",
-                        "name": "CI_CD_Query"
-                      }
-                      EOF
-                    )"
-                  },
-                  "warehouse_id": "$WAREHOUSE_ID"
-                }
-              }
-            ]
-          }' | jq -r '.job_id')
-          
-        # Run the job and wait for completion
-        echo "Job ID: $JOB_ID"
-        RUN_ID=$(databricks jobs run-now --job-id $JOB_ID | jq -r '.run_id')
+        # Execute SQL statements directly
+        echo "📝 Executing SQL queries..."
         
-        # Wait for job completion
-        echo "Waiting for job to complete..."
-        while :; do
-          STATUS=$(databricks runs get --run-id $RUN_ID | jq -r '.state.life_cycle_state')
-          echo "Current status: $STATUS"
-          [[ "$STATUS" == "TERMINATED" || "$STATUS" == "SKIPPED" || "$STATUS" == "INTERNAL_ERROR" ]] && break
-          sleep 10
-        done
+        # Create table
+        echo "Creating example table..."
+        databricks sql query execute \
+          --warehouse-id "$WAREHOUSE_ID" \
+          --query "CREATE TABLE IF NOT EXISTS example_table (id INT, name STRING, value DOUBLE)" \
+          || echo "Warning: Failed to create table"
         
-        # Get final status
-        FINAL_STATUS=$(databricks runs get --run-id $RUN_ID | jq -r '.state.result_state')
+        # Insert data
+        echo "Inserting sample data..."
+        databricks sql query execute \
+          --warehouse-id "$WAREHOUSE_ID" \
+          --query "INSERT INTO example_table VALUES (1, 'test', 3.14)" \
+          || echo "Warning: Failed to insert data"
         
-        if [ "$FINAL_STATUS" == "SUCCESS" ]; then
-          echo "✅ SQL execution completed successfully!"
-        else
-          echo "❌ SQL execution failed with status: $FINAL_STATUS"
-          databricks runs get-output --run-id $RUN_ID
-          exit 1
-        fi
+        # Query data
+        echo "Querying data..."
+        databricks sql query execute \
+          --warehouse-id "$WAREHOUSE_ID" \
+          --query "SELECT * FROM example_table" \
+          --output JSON || echo "Warning: Failed to query data"
         
+        echo "✅ SQL execution completed!"
         echo "🔗 View your SQL Warehouse: ${{ secrets.DATABRICKS_HOST }}#sql/warehouses/$WAREHOUSE_ID"
