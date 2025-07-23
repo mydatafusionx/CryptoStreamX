@@ -36,9 +36,10 @@ jobs:
         
     - name: Run tests
       run: |
-        # Adiciona o diretório raiz ao PYTHONPATH
+        # Add root directory to PYTHONPATH
         export PYTHONPATH=$PYTHONPATH:${{ github.workspace }}
-        python -m pytest tests/ -v --cov=.
+        # Explicitly specify test files to run
+        python -m pytest tests/test_api_client.py tests/test_config.py tests/test_db_utils.py tests/test_pipeline.py -v --cov=.
     
     - name: Configure Databricks CLI
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'

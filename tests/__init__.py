@@ -5,7 +5,6 @@
 from tests.test_api_client import TestAPIClient, TestCoinGeckoClient
 from tests.test_config import TestConfig, TestEnvironmentValidation
 from tests.test_db_utils import TestDeltaTableManager
-from tests.test_pipeline import TestPipelineIntegration
 
 __all__ = [
     'TestAPIClient',
@@ -13,5 +12,4 @@ __all__ = [
     'TestConfig',
     'TestEnvironmentValidation',
     'TestDeltaTableManager',
-    'TestPipelineIntegration',
 ]
