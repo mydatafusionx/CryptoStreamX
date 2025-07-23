@@ -106,68 +106,37 @@ jobs:
         echo "\n📋 Deployed notebooks in $WORKSPACE_BASE:"
         databricks workspace ls "$WORKSPACE_BASE"
     
-    - name: Run Databricks Job
+    - name: Run SQL Queries on Warehouse
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
       run: |
-        # Define the path to the main notebook
-        MAIN_NOTEBOOK_PATH="/Users/lnunesvalle@gmail.com/DataFusionX/notebooks/bronze/ingest_coingecko.py"
+        # Define SQL Warehouse ID (from your Databricks SQL Warehouse)
+        WAREHOUSE_ID="${{ secrets.DATABRICKS_WAREHOUSE_ID }}"
         
-        echo "🚀 Starting Databricks job for notebook: $MAIN_NOTEBOOK_PATH"
+        echo "🚀 Starting SQL execution on Warehouse ID: $WAREHOUSE_ID"
         
-        # Create a temporary job configuration
-        JOB_CONFIG=$(cat <<EOF
-        {
-          "name": "Crypto Data Pipeline - $(date +'%Y%m%d-%H%M%S')",
-          "existing_cluster_id": "${{ secrets.DATABRICKS_CLUSTER_ID }}",
-          "libraries": [
-            {
-              "pypi": {
-                "package": "requests"
-              }
-            }
-          ],
-          "notebook_task": {
-            "notebook_path": "$MAIN_NOTEBOOK_PATH",
-            "source": "WORKSPACE"
-          },
-          "max_retries": 1,
-          "timeout_seconds": 3600
-        }
+        # Create a temporary file for SQL queries
+        cat > queries.sql << 'EOF'
+        -- Example: Create a table
+        CREATE TABLE IF NOT EXISTS example_table (
+          id INT,
+          name STRING,
+          value DOUBLE
+        );
+        
+        -- Example: Insert data
+        INSERT INTO example_table VALUES
+          (1, 'test', 3.14);
+          
+        -- Query the data
+        SELECT * FROM example_table;
         EOF
-        )
         
-        # Create a temporary file for the job config
-        echo "$JOB_CONFIG" > job_config.json
+        # Execute the SQL file using Databricks SQL CLI
+        echo "📝 Executing SQL queries..."
+        databricks sql \
+          --warehouse-id "$WAREHOUSE_ID" \
+          --file queries.sql \
+          --output json
         
-        # Create the job
-        echo "Creating Databricks job..."
-        JOB_RESPONSE=$(databricks jobs create --json @job_config.json)
-        echo "Job create response: $JOB_RESPONSE"
-        
-        # Extract job ID using grep and cut (more reliable than jq)
-        JOB_ID=$(echo "$JOB_RESPONSE" | grep -o '"job_id":[0-9]*' | cut -d: -f2)
-        
-        if [ -z "$JOB_ID" ]; then
-          echo "❌ Failed to create job. Full response:"
-          echo "$JOB_RESPONSE"
-          exit 1
-        fi
-        
-        echo "✅ Job created with ID: $JOB_ID"
-        echo "🚀 Starting job run..."
-        
-        # Run the job
-        RUN_RESPONSE=$(databricks jobs run-now --job-id "$JOB_ID")
-        echo "Job run response: $RUN_RESPONSE"
-        
-        # Extract run ID using grep and cut
-        RUN_ID=$(echo "$RUN_RESPONSE" | grep -o '"run_id":[0-9]*' | cut -d: -f2)
-        
-        if [ -z "$RUN_ID" ]; then
-          echo "❌ Failed to start job run. Full response:"
-          echo "$RUN_RESPONSE"
-          exit 1
-        fi
-        
-        echo "✅ Job run started with ID: $RUN_ID"
-        echo "🔗 View the run in Databricks: ${{ secrets.DATABRICKS_HOST }}#job/$JOB_ID/run/$RUN_ID"
+        echo "✅ SQL execution completed successfully!"
+        echo "🔗 View your SQL Warehouse: ${{ secrets.DATABRICKS_HOST }}#sql/warehouses/$WAREHOUSE_ID"

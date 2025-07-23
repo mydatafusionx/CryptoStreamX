@@ -27,15 +27,32 @@ from pyspark.sql.types import (
     MapType
 )
 
-# Adiciona o diretório raiz ao path para importar módulos
+# Configuração de imports e paths
 import os
 import sys
 
 # Adiciona o diretório src ao path para importações locais
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-src_path = os.path.join(project_root, 'src')
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
+try:
+    # Para execução local
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    src_path = os.path.join(project_root, 'src')
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+except NameError:
+    # Para execução no Databricks
+    import json
+    import inspect
+    
+    # Tenta obter o caminho do notebook atual
+    try:
+        notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
+        project_root = '/Workspace' + os.path.dirname(os.path.dirname(os.path.dirname(notebook_path)))
+        src_path = os.path.join(project_root, 'src')
+        if src_path not in sys.path:
+            sys.path.insert(0, src_path)
+    except Exception as e:
+        print(f"Aviso: Não foi possível configurar o path automaticamente: {str(e)}")
+        print("Certifique-se de que os módulos estão no PYTHONPATH")
 
 # Importações personalizadas
 from utils.api_client import CoinGeckoClient
@@ -46,8 +63,9 @@ from utils.config import config
 IS_DATABRICKS = 'dbutils' in globals()
 
 # Inicialização do Spark
-if not IS_DATABRICKS:
-    try:
+try:
+    if not IS_DATABRICKS:
+        print("Inicializando Spark localmente...")
         from pyspark.sql import SparkSession
         
         # Configurações para execução local
@@ -61,21 +79,50 @@ if not IS_DATABRICKS:
             .config("spark.driver.memory", "2g")
             .config("spark.executor.memory", "2g")
             .config("spark.jars.packages", "io.delta:delta-core_2.12:2.2.0")
-            .enableHiveSupport()
             .getOrCreate()
         )
-        print("Spark session criada localmente")
-    except Exception as e:
-        raise ImportError(f"Falha ao inicializar o Spark local: {str(e)}")
-else:
-    print("Usando sessão Spark existente (Databricks)")
-    spark = SparkSession.builder.getOrCreate()
+        print("✅ Spark session criada localmente")
+    else:
+        print("🔵 Usando sessão Spark existente (Databricks)")
+        from pyspark.sql import SparkSession
+        spark = SparkSession.builder.getOrCreate()
+        
+except Exception as e:
+    print(f"⚠️ Aviso: Não foi possível inicializar o Spark: {str(e)}")
+    print("Tentando continuar sem Spark...")
+    spark = None
 
 # COMMAND ----------
 
 # DBTITLE 1,Configuração Inicial
 # Inicializa o cliente da API
-coingecko = CoinGeckoClient()
+try:
+    # Tenta carregar a chave da API do ambiente ou de um arquivo de configuração
+    api_key = os.environ.get('COINGECKO_API_KEY')
+    
+    if not api_key and os.path.exists('config.py'):
+        try:
+            from config import COINGECKO_API_KEY as config_key
+            api_key = config_key
+        except ImportError:
+            pass
+    
+    if api_key:
+        print("🔑 Usando chave de API fornecida")
+        coingecko = CoinGeckoClient(api_key=api_key)
+    else:
+        print("⚠️ Nenhuma chave de API encontrada. Usando modo sem autenticação (limitações podem se aplicar).")
+        coingecko = CoinGeckoClient()
+        
+    # Testa a conexão
+    print("Testando conexão com a API CoinGecko...")
+    test_data = coingecko.get_market_data(per_page=1)
+    print(f"✅ Conexão com a API CoinGecko bem-sucedida! Versão: {test_data[0].get('api_version', 'desconhecida')}")
+    
+except Exception as e:
+    print(f"❌ Erro ao inicializar o cliente da API: {str(e)}")
+    print("O script continuará, mas algumas funcionalidades podem não estar disponíveis.")
+    coingecko = None
 
 # Inicializa o gerenciador de tabelas Delta
 db_manager = DeltaTableManager(spark, config.catalog_name, config.bronze_schema)
