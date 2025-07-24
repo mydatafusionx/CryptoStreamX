@@ -124,30 +124,148 @@ config = {
     
     # db_utils.py
     db_utils_content = [
-        '# db_utils.py simplificado',
+        'from pyspark.sql import SparkSession',
+        'from pyspark.sql.functions import current_timestamp, lit',
+        'from datetime import datetime',
+        'from typing import Optional, List',
+        'from pyspark.sql import DataFrame',
+        'from pyspark.sql.types import StructType',
+        '',
         'class DeltaTableManager:',
-        '    def __init__(self, spark, catalog_name, schema_name, table_name):',
+        '    """Helper class for managing Delta tables."""',
+        '    ', 
+        '    def __init__(self, spark: SparkSession, catalog_name: str, schema_name: str, table_name: Optional[str] = None):',
+        '        """Initialize the DeltaTableManager.',
+        '        ', 
+        '        Args:',
+        '            spark: Active SparkSession',
+        '            catalog_name: Name of the catalog (e.g., \'hive_metastore\')',
+        '            schema_name: Name of the schema (e.g., \'bronze\', \'silver\', \'gold\')',
+        '            table_name: Optional default table name to use for operations',
+        '        """',
         '        self.spark = spark',
         '        self.catalog_name = catalog_name',
         '        self.schema_name = schema_name',
         '        self.table_name = table_name',
-        '        self.full_table_name = "{}.{}.{}".format(',
-        '            catalog_name, schema_name, table_name',
-        '        )',
-        '        self.path = "dbfs:/user/hive/warehouse/{}.db/{}".format(',
-        '            schema_name, table_name',
-        '        )',
+        '        self.full_schema_path = f"{catalog_name}.{schema_name}"',
+        '        ', 
+        '        # Ensure catalog and schema exist',
+        '        self._ensure_catalog_and_schema()',
         '    ', 
-        '    def write_dataframe(self, df, mode="overwrite"):',
-        '        """Salva o DataFrame como uma tabela Delta."""',
+        '    def _ensure_catalog_and_schema(self) -> None:',
+        '        """Ensure that the catalog and schema exist."""',
+        '        try:',
+        '            # No need to create catalog for hive_metastore',
+        '            if self.catalog_name.lower() != "hive_metastore":',
+        '                self.spark.sql(f"CREATE CATALOG IF NOT EXISTS {self.catalog_name}")',
+        '            ', 
+        '            # Create schema if not exists',
+        '            self.spark.sql(f"CREATE SCHEMA IF NOT EXISTS {self.full_schema_path}")',
+        '            print(f"✅ Schema verificado/criado: {self.full_schema_path}")',
+        '            ', 
+        '        except Exception as e:',
+        '            print(f"❌ Erro ao verificar/criar schema {self.full_schema_path}: {str(e)}")',
+        '            raise',
+        '    ', 
+        '    def table_exists(self, table_name: str = None) -> bool:',
+        '        """Check if a table exists in the current schema."""',
+        '        table_to_check = table_name or self.table_name',
+        '        if not table_to_check:',
+        '            raise ValueError("No table name provided and no default table_name set")',
+        '            ',
+        '        full_table_name = f"{self.full_schema_path}.{table_to_check}"',
+        '        try:',
+        '            self.spark.sql(f"DESCRIBE TABLE {full_table_name}")',
+        '            return True',
+        '        except Exception as e:',
+        '            if "Table or view not found" in str(e):',
+        '                return False',
+        '            raise',
+        '    ', 
+        '    def write_dataframe(',
+        '        self,',
+        '        df: DataFrame,',
+        '        table_name: str = None,',
+        '        mode: str = "append",',
+        '        merge_schema: bool = False,',
+        '        overwrite_schema: bool = False,',
+        '        partition_by: Optional[List[str]] = None',
+        '    ) -> None:',
+        '        """Write a DataFrame to a Delta table."""',
+        '        target_table = table_name or self.table_name',
+        '        if not target_table:',
+        '            raise ValueError("No table name provided and no default table_name set")',
+        '            
+        '        full_table_name = f"{self.full_schema_path}.{target_table}"',
+        '        print(f"Preparando para escrever na tabela: {full_table_name}")',
+        '        print(f"Schema do DataFrame: {df.schema}")',
+        '        print(f"Modo de escrita: {mode}")',
+        '        print(f"Partição: {partition_by}")',
+        '        
+        '        # Add metadata columns if they don\'t exist',
+        '        if "ingestion_timestamp" not in df.columns:',
+        '            df = df.withColumn("ingestion_timestamp", current_timestamp())',
+        '        if "pipeline_run_id" not in df.columns:',
+        '            df = df.withColumn("pipeline_run_id", lit(f\'run_{int(datetime.now().timestamp())}\'))',
+        '        
+        '        # Create table if it doesn\'t exist',
+        '        if not self.table_exists(target_table):',
+        '            print(f"Tabela {full_table_name} não existe. Criando...")',
+        '            try:',
+        '                # Create table with explicit schema',
+        '                create_stmt = f\'CREATE TABLE {full_table_name} (\''
+        '                for field in df.schema.fields:',
+        '                    create_stmt += f"\\n  {field.name} {field.dataType.simpleString()},"',
+        '                create_stmt = create_stmt.rstrip(",") + "\\n)"
+        '                
+        '                if partition_by:',
+        '                    create_stmt += f"\\nPARTITIONED BY ({", ".join(partition_by)})"',
+        '                    
+        '                create_stmt += "\\nUSING DELTA"
+        '                print(f"Executando: {create_stmt}")
+        '                self.spark.sql(create_stmt)
+        '                print(f"✅ Tabela {full_table_name} criada com sucesso!")
+        '            except Exception as e:',
+        '                print(f"❌ Erro ao criar tabela {full_table_name}: {str(e)}")
+        '                raise',
+        '        
+        '        # Configure writer',
         '        writer = df.write.format("delta")',
-        '        writer = writer.mode(mode)',
-        '        writer = writer.option("path", self.path)',
-        '        writer.saveAsTable(self.full_table_name)',
+        '        if partition_by:',
+        '            writer = writer.partitionBy(partition_by)',
+        '        if merge_schema:',
+        '            writer = writer.option("mergeSchema", "true")',
+        '        if overwrite_schema:',
+        '            writer = writer.option("overwriteSchema", "true")',
+        '            
+        '        try:',
+        '            print(f"Escrevendo {df.count()} registros em {full_table_name}...")',
+        '            writer.mode(mode).saveAsTable(full_table_name)',
+        '            print(f"✅ Dados escritos com sucesso em {full_table_name}")',
+        '        except Exception as e:',
+        '            error_msg = str(e).lower()',
+        '            print(f"❌ Erro ao escrever na tabela {full_table_name}: {error_msg}")
+        '            
+        '            if "schema mismatch" in error_msg and not merge_schema:',
+        '                print("⚠️  Tentando novamente com mergeSchema=True...")',
+        '                writer.option("mergeSchema", "true").mode(mode).saveAsTable(full_table_name)',
+        '                print("✅ Dados escritos com sucesso usando mergeSchema=True")',
+        '            elif "table or view not found" in error_msg:',
+        '                print("⚠️  Tabela não encontrada. Tentando recriar a tabela...")',
+        '                self.spark.sql(f"DROP TABLE IF EXISTS {full_table_name}")',
+        '                # Try again with a fresh table',
+        '                return self.write_dataframe(df, target_table, mode, merge_schema, overwrite_schema, partition_by)',
+        '            else:',
+        '                raise',
         '    ', 
-        '    def read_table(self):',
-        '        """Lê a tabela Delta."""',
-        '        return self.spark.read.table(self.full_table_name)',
+        '    def read_table(self, table_name: str = None) -> DataFrame:',
+        '        """Read data from a Delta table."""',
+        '        target_table = table_name or self.table_name',
+        '        if not target_table:',
+        '            raise ValueError("No table name provided and no default table_name set")',
+        '            
+        '        full_table_name = f"{self.full_schema_path}.{target_table}"',
+        '        return self.spark.read.table(full_table_name)',
         '    ', 
         '    def table_exists(self):',
         '        """Verifica se a tabela existe."""',
@@ -306,11 +424,17 @@ print(f"Tabela: {table_name}")
 
 # Cria uma instância do DeltaTableManager
 try:
-    # Inicializa sem o table_name, já que ele é opcional no construtor
+    # Inicializa com todos os parâmetros necessários
+    print(f"Inicializando DeltaTableManager com os seguintes parâmetros:")
+    print(f"- catalog_name: {catalog_name}")
+    print(f"- schema_name: {bronze_schema}")
+    print(f"- table_name: {table_name}")
+    
     db_manager = DeltaTableManager(
         spark=spark,
         catalog_name=catalog_name,
-        schema_name=bronze_schema
+        schema_name=bronze_schema,
+        table_name=table_name  # Adicionando o parâmetro obrigatório
     )
     print("✅ Gerenciador de tabelas Delta inicializado com sucesso!")
     
