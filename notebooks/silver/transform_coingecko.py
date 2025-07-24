@@ -96,13 +96,33 @@ def read_bronze_data():
             logger.error(f"Tabela {config.bronze_table_path} não encontrada!")
             return None
         
-        # Lê apenas a última execução do pipeline
-        latest_run = spark.sql(f"""
-            SELECT DISTINCT pipeline_run_id 
-            FROM {config.bronze_table_path}
-            ORDER BY ingestion_timestamp DESC 
-            LIMIT 1
-        """).collect()
+        # Primeiro, verifica as colunas disponíveis na tabela
+        table_info = spark.sql(f"DESCRIBE TABLE EXTENDED {config.bronze_table_path}")
+        columns = [row.col_name.lower() for row in table_info.select("col_name").collect()]
+        logger.info(f"Colunas disponíveis na tabela bronze: {', '.join(columns)}")
+        
+        # Verifica se a coluna de timestamp existe (pode ter nomes diferentes)
+        timestamp_col = None
+        for col_name in ['ingestion_timestamp', 'timestamp', 'created_at', 'last_updated']:
+            if col_name in columns:
+                timestamp_col = col_name
+                break
+                
+        if not timestamp_col:
+            logger.warning("Nenhuma coluna de timestamp encontrada. Usando a última execução sem ordenação por tempo.")
+            latest_run = spark.sql(f"""
+                SELECT DISTINCT pipeline_run_id 
+                FROM {config.bronze_table_path}
+                LIMIT 1
+            """).collect()
+        else:
+            logger.info(f"Usando a coluna '{timestamp_col}' para ordenação temporal")
+            latest_run = spark.sql(f"""
+                SELECT DISTINCT pipeline_run_id 
+                FROM {config.bronze_table_path}
+                ORDER BY {timestamp_col} DESC 
+                LIMIT 1
+            """).collect()
         
         if not latest_run:
             logger.warning("Nenhum dado encontrado na camada Bronze.")
@@ -116,11 +136,12 @@ def read_bronze_data():
                  .filter(col("pipeline_run_id") == run_id)
         
         logger.info(f"Total de registros a serem processados: {df.count()}")
+        logger.info(f"Schema do DataFrame: {df.schema}")
         return df
         
     except Exception as e:
-        logger.error(f"Erro ao ler dados da camada Bronze: {str(e)}")
-        raise
+        logger.error(f"Erro ao ler dados da camada Bronze: {str(e)}", exc_info=True)
+        return None
 
 # COMMAND ----------
 
