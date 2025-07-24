@@ -1,5 +1,6 @@
 # Databricks notebook source
 # DBTITLE 1,Importações
+from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, lit, when, to_timestamp, coalesce, current_timestamp, sum as _sum
 from pyspark.sql.types import DoubleType, TimestampType, StructType, StructField, StringType, LongType, DecimalType
 import sys
@@ -7,36 +8,60 @@ import os
 import time
 from datetime import datetime
 import json
-
-# Adiciona o diretório raiz ao path para importar módulos
-sys.path.append(os.path.abspath(os.path.join(os.getcwd(), os.pardir, os.pardir)))
-
-# Importa módulos personalizados
-from src.utils.config import config
-from src.utils.db_utils import DeltaTableManager
+import logging
 
 # Configura o logger
-import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Configurações
+class Config:
+    def __init__(self):
+        # Nomes dos schemas e tabelas
+        self.bronze_schema = 'bronze'
+        self.silver_schema = 'silver'
+        self.bronze_table = 'coingecko_raw'
+        self.silver_table = 'coingecko_enriched'
+        
+        # Configurações adicionais podem ser adicionadas aqui
+        self.silver_table_path = f"{self.silver_schema}.{self.silver_table}"
+        self.bronze_table_path = f"{self.bronze_schema}.{self.bronze_table}"
+
+# Inicializa a configuração
+config = Config()
+
+# Classe para gerenciar tabelas Delta
+class DeltaTableManager:
+    def __init__(self, spark, schema_name=None):
+        self.spark = spark
+        self.schema_name = schema_name
+    
+    def create_schema_if_not_exists(self):
+        """Cria o schema se não existir."""
+        if self.schema_name:
+            self.spark.sql(f"CREATE SCHEMA IF NOT EXISTS {self.schema_name}")
+        return self
+    
+    def table_exists(self, table_path):
+        """Verifica se a tabela existe."""
+        try:
+            self.spark.sql(f"DESCRIBE TABLE {table_path}")
+            return True
+        except:
+            return False
+
 # Inicializa o gerenciador de tabelas Delta
 try:
-    db_manager = DeltaTableManager(
-        spark=spark,
-        catalog_name=config.catalog_name,
-        schema_name=config.silver_schema
-    )
-    logger.info(f"Conexão com o banco de dados inicializada: {config.catalog_name}.{config.silver_schema}")
+    db_manager = DeltaTableManager(spark=spark, schema_name=config.silver_schema)
+    db_manager.create_schema_if_not_exists()
+    logger.info(f"Conexão com o banco de dados inicializada: {config.silver_schema}")
 except Exception as e:
     logger.error(f"Erro ao inicializar o gerenciador de tabelas Delta: {str(e)}")
     raise
 
-# Nomes das tabelas
-silver_table = config.silver_table
-bronze_table = config.bronze_table
-logger.info(f"Tabela Bronze configurada: {config.catalog_name}.{config.bronze_schema}.{bronze_table}")
-logger.info(f"Tabela Silver configurada: {config.catalog_name}.{config.silver_schema}.{silver_table}")
+# Log das configurações
+logger.info(f"Tabela Bronze configurada: {config.bronze_table_path}")
+logger.info(f"Tabela Silver configurada: {config.silver_table_path}")
 
 # COMMAND ----------
 
@@ -44,32 +69,37 @@ logger.info(f"Tabela Silver configurada: {config.catalog_name}.{config.silver_sc
 def read_bronze_data():
     """Lê os dados mais recentes da camada Bronze."""
     try:
-        print(f"Lendo dados da tabela {config.catalog_name}.{config.bronze_schema}.{bronze_table}...")
+        logger.info(f"Lendo dados da tabela {config.bronze_table_path}...")
+        
+        # Verifica se a tabela bronze existe
+        if not db_manager.table_exists(config.bronze_table_path):
+            logger.error(f"Tabela {config.bronze_table_path} não encontrada!")
+            return None
         
         # Lê apenas a última execução do pipeline
         latest_run = spark.sql(f"""
             SELECT DISTINCT pipeline_run_id 
-            FROM {config.catalog_name}.{config.bronze_schema}.{bronze_table}
+            FROM {config.bronze_table_path}
             ORDER BY ingestion_timestamp DESC 
             LIMIT 1
         """).collect()
         
         if not latest_run:
-            print("Nenhum dado encontrado na camada Bronze.")
+            logger.warning("Nenhum dado encontrado na camada Bronze.")
             return None
             
         run_id = latest_run[0].pipeline_run_id
-        print(f"Processando execução: {run_id}")
+        logger.info(f"Processando execução: {run_id}")
         
         # Lê os dados da última execução
-        df = spark.table(f"{config.catalog_name}.{config.bronze_schema}.{bronze_table}") \
+        df = spark.table(config.bronze_table_path) \
                  .filter(col("pipeline_run_id") == run_id)
         
-        print(f"Total de registros a serem processados: {df.count()}")
+        logger.info(f"Total de registros a serem processados: {df.count()}")
         return df
         
     except Exception as e:
-        print(f"Erro ao ler dados da camada Bronze: {str(e)}")
+        logger.error(f"Erro ao ler dados da camada Bronze: {str(e)}")
         raise
 
 # COMMAND ----------
