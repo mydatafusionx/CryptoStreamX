@@ -331,46 +331,48 @@ def save_to_silver(df):
         bool: True se os dados foram salvos com sucesso, False caso contrário
     """
     try:
-        print(f"Iniciando salvamento na tabela {config.catalog_name}.{config.silver_schema}.{silver_table}...")
-        
-        # Verifica se existem dados para salvar
-        if df.rdd.isEmpty():
-            print("Aviso: Nenhum dado para salvar.")
+        if df is None or df.rdd.isEmpty():
+            logger.warning("Nenhum dado para salvar na camada Silver.")
             return False
             
-        # Registra o início da operação
-        start_time = time.time()
-        record_count = df.count()
+        logger.info(f"Salvando {df.count()} registros na camada Silver...")
         
-        print(f"Salvando {record_count} registros na camada Silver...")
+        # Garante que o schema silver existe
+        db_manager.create_schema_if_not_exists()
         
-        # Escreve os dados na tabela Silver
-        db_manager.write_dataframe(
-            df=df,
-            table_name=silver_table,
-            mode="overwrite",
-            merge_schema=True,
-            partition_by=["pipeline_run_id"]
-        )
+        # Verifica se a tabela silver já existe
+        if db_manager.table_exists(config.silver_table_path):
+            # Atualiza a tabela existente
+            logger.info(f"Atualizando tabela {config.silver_table_path}...")
+            
+            # Cria uma view temporária
+            df.createOrReplaceTempView("updates")
+            
+            # Usa MERGE para atualizar os dados existentes
+            merge_sql = f"""
+            MERGE INTO {config.silver_table_path} target
+            USING updates source
+            ON target.id = source.id AND target.last_updated = source.last_updated
+            WHEN NOT MATCHED THEN
+                INSERT *
+            """
+            spark.sql(merge_sql)
+        else:
+            # Cria uma nova tabela
+            logger.info(f"Criando nova tabela {config.silver_table_path}...")
+            df.write.format("delta").mode("overwrite").saveAsTable(config.silver_table_path)
         
-        # Registra métricas
-        end_time = time.time()
-        duration = end_time - start_time
-        records_per_second = record_count / duration if duration > 0 else 0
+        # Otimiza a tabela
+        spark.sql(f"OPTIMIZE {config.silver_table_path} ZORDER BY (id)")
         
-        print(f"Dados salvos com sucesso na camada Silver.")
-        print(f"Estatísticas: {record_count} registros processados em {duration:.2f} segundos "
-              f"({records_per_second:.2f} registros/segundo)")
-              
+        # Verifica o resultado
+        saved_count = spark.table(config.silver_table_path).count()
+        logger.info(f"Dados salvos com sucesso em {config.silver_table_path}. Total de registros: {saved_count}")
         return True
         
     except Exception as e:
-        error_msg = f"Erro ao salvar dados na camada Silver: {str(e)}"
-        print(error_msg)
-        # Log adicional para debug
-        print(f"Schema do DataFrame: {df.schema}")
-        print(f"Colunas: {df.columns}")
-        raise Exception(error_msg) from e
+        logger.error(f"Erro ao salvar dados na camada Silver: {str(e)}")
+        raise
 
 # COMMAND ----------
 
@@ -382,85 +384,74 @@ def main():
     Returns:
         dict: Dicionário com métricas e status da execução
     """
-    # Inicializa métricas
+    start_time = time.time()
     metrics = {
-        "start_time": datetime.utcnow().isoformat(),
-        "end_time": None,
-        "duration_seconds": 0,
-        "status": "success",
-        "record_count": 0,
-        "error": None
+        'status': 'SUCCESS',
+        'start_time': datetime.now().isoformat(),
+        'end_time': None,
+        'duration_seconds': None,
+        'records_processed': 0,
+        'error_message': None,
+        'bronze_table': config.bronze_table_path,
+        'silver_table': config.silver_table_path
     }
     
     try:
-        logger.info("=" * 80)
-        logger.info("INICIANDO PIPELINE SILVER".center(80))
-        logger.info("=" * 80)
+        logger.info("=== Iniciando pipeline Silver ===")
+        logger.info(f"Bronze: {config.bronze_table_path}")
+        logger.info(f"Silver: {config.silver_table_path}")
         
         # 1. Ler dados da camada Bronze
-        logger.info("1. Lendo dados da camada Bronze...")
-        start_time = time.time()
+        logger.info("Etapa 1/3: Lendo dados da camada Bronze...")
         bronze_df = read_bronze_data()
-        metrics["bronze_record_count"] = bronze_df.count()
-        logger.info(f"   ✓ Dados lidos: {metrics['bronze_record_count']} registros em {time.time() - start_time:.2f}s")
-        
-        if bronze_df.rdd.isEmpty():
-            logger.warning("Nenhum dado encontrado na camada Bronze. Encerrando pipeline.")
-            metrics["status"] = "completed_no_data"
+        if bronze_df is None or bronze_df.rdd.isEmpty():
+            logger.warning("Nenhum dado para processar na camada Bronze.")
+            metrics['status'] = 'SKIPPED'
             return metrics
         
         # 2. Validar dados
-        logger.info("2. Validando dados...")
-        start_time = time.time()
+        logger.info("Etapa 2/3: Validando dados...")
         validated_df = validate_data(bronze_df)
-        logger.info(f"   ✓ Validação concluída em {time.time() - start_time:.2f}s")
+        if validated_df is None or validated_df.rdd.isEmpty():
+            logger.warning("Nenhum dado válido para processar após validação.")
+            metrics['status'] = 'SKIPPED'
+            return metrics
         
         # 3. Transformar dados
-        logger.info("3. Transformando dados...")
-        start_time = time.time()
+        logger.info("Etapa 3/3: Transformando dados...")
         transformed_df = transform_data(validated_df)
-        metrics["record_count"] = transformed_df.count()
-        logger.info(f"   ✓ Transformação concluída: {metrics['record_count']} registros em {time.time() - start_time:.2f}s")
+        if transformed_df is None or transformed_df.rdd.isEmpty():
+            logger.warning("Nenhum dado para salvar após transformação.")
+            metrics['status'] = 'SKIPPED'
+            return metrics
         
         # 4. Salvar na camada Silver
-        logger.info("4. Salvando na camada Silver...")
-        start_time = time.time()
-        save_success = save_to_silver(transformed_df)
-        
-        if save_success:
-            logger.info(f"   ✓ Dados salvos com sucesso em {time.time() - start_time:.2f}s")
-            metrics["status"] = "completed_success"
+        logger.info("Salvando resultados na camada Silver...")
+        if save_to_silver(transformed_df):
+            metrics['records_processed'] = transformed_df.count()
+            logger.info(f"✅ Pipeline executado com sucesso. {metrics['records_processed']} registros processados.")
         else:
-            logger.warning("   ! Nenhum dado foi salvo na camada Silver")
-            metrics["status"] = "completed_no_data"
-        
-        logger.info("=" * 80)
-        logger.info("PIPELINE SILVER CONCLUÍDO COM SUCESSO".center(80))
-        logger.info("=" * 80)
-        
-        return metrics
-        
+            metrics['status'] = 'FAILED'
+            metrics['error_message'] = 'Falha ao salvar os dados na camada Silver.'
+    
     except Exception as e:
-        error_msg = f"Erro durante a execução do pipeline Silver: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        metrics["status"] = "failed"
-        metrics["error"] = str(e)
-        raise Exception(error_msg) from e
-        
+        metrics['status'] = 'FAILED'
+        metrics['error_message'] = str(e)
+        logger.error(f"❌ Erro durante a execução do pipeline: {str(e)}", exc_info=True)
+        raise
+    
     finally:
-        # Atualiza métricas de tempo
-        metrics["end_time"] = datetime.utcnow().isoformat()
-        start_dt = datetime.fromisoformat(metrics["start_time"].replace('Z', '+00:00'))
-        end_dt = datetime.fromisoformat(metrics["end_time"].replace('Z', '+00:00'))
-        metrics["duration_seconds"] = (end_dt - start_dt).total_seconds()
+        # Atualiza métricas finais
+        metrics['end_time'] = datetime.now().isoformat()
+        metrics['duration_seconds'] = round(time.time() - start_time, 2)
         
         # Log das métricas
-        logger.info("\n" + "="*50)
-        logger.info("MÉTRICAS DA EXECUÇÃO".center(50))
-        logger.info("="*50)
-        logger.info(f"Status: {metrics['status']}")
-        logger.info(f"Início: {metrics['start_time']}")
-        logger.info(f"Término: {metrics['end_time']}")
+        logger.info("\n=== Métricas de Execução ===")
+        for key, value in metrics.items():
+            if key != 'error_message' or (key == 'error_message' and value is not None):
+                logger.info(f"{key.upper()}: {value}")
+        
+        return metrics
         logger.info(f"Duração: {metrics['duration_seconds']:.2f} segundos")
         logger.info(f"Registros processados: {metrics.get('record_count', 0)}")
         if metrics["error"]:
