@@ -30,12 +30,17 @@ class DeltaTableManager:
         self._ensure_catalog_and_schema()
     
     def _ensure_catalog_and_schema(self):
-        """Ensure that the catalog and schema exist."""
-        # Create catalog if it doesn't exist
-        self.spark.sql(f"CREATE CATALOG IF NOT EXISTS {self.catalog_name}")
-        
-        # Create schema if it doesn't exist
-        self.spark.sql(f"CREATE SCHEMA IF NOT EXISTS {self.full_schema_path}")
+        """Ensure that the schema exists in Hive Metastore."""
+        try:
+            # Tenta usar o schema diretamente (Hive Metastore)
+            self.spark.sql(f"USE {self.schema_name}")
+        except Exception as e:
+            # Se falhar, tenta criar o schema
+            if "Database 'default' not found" in str(e) or "not found" in str(e).lower():
+                self.spark.sql(f"CREATE DATABASE IF NOT EXISTS {self.schema_name}")
+                self.spark.sql(f"USE {self.schema_name}")
+            else:
+                raise
     
     def table_exists(self, table_name: str) -> bool:
         """Check if a table exists in the current schema.
@@ -47,12 +52,15 @@ class DeltaTableManager:
             bool: True if the table exists, False otherwise
         """
         try:
-            self.spark.sql(f"DESCRIBE TABLE {self.full_schema_path}.{table_name}")
+            # Tenta descrever a tabela usando apenas o schema (Hive Metastore)
+            self.spark.sql(f"DESCRIBE TABLE {self.schema_name}.{table_name}")
             return True
         except Exception as e:
-            if "Table or view not found" in str(e):
+            if any(err in str(e) for err in ["Table or view not found", "Table or view `", "cannot find table"]):
                 return False
-            raise
+            # Log do erro inesperado para depuração
+            print(f"Erro ao verificar tabela {table_name}: {str(e)}")
+            return False
     
     def create_table(
         self, 
@@ -121,47 +129,83 @@ class DeltaTableManager:
             overwrite_schema: If True, allows overwriting the table schema
             partition_by: List of column names to partition the table by
         """
-        full_table_name = f"{self.full_schema_path}.{table_name}"
+        # Usa apenas o schema_name no Hive Metastore (ignora catalog_name)
+        full_table_name = f"{self.schema_name}.{table_name}"
         
-        # Add metadata columns if they don't exist
+        print(f"Preparando para escrever na tabela: {full_table_name}")
+        print(f"Schema do DataFrame: {df.schema}")
+        print(f"Modo de escrita: {mode}")
+        print(f"Partição: {partition_by}")
+        
+        # Garante que as colunas de metadados existam
         if "ingestion_timestamp" not in df.columns:
             df = df.withColumn("ingestion_timestamp", current_timestamp())
         
         if "pipeline_run_id" not in df.columns:
-            # You can set a proper run ID here, e.g., from environment variable
-            df = df.withColumn("pipeline_run_id", lit("manual_run"))
+            df = df.withColumn("pipeline_run_id", lit(f"run_{int(datetime.now().timestamp())}"))
         
-        # Create table if it doesn't exist
+        # Cria a tabela se não existir
         if not self.table_exists(table_name):
-            logger.info(f"Table {full_table_name} does not exist. Creating it...")
-            # Create the table with the DataFrame's schema
-            self.spark.sql(f"CREATE TABLE {full_table_name} USING DELTA AS SELECT * FROM df WHERE 1=0")
-            logger.info(f"Table {full_table_name} created successfully.")
+            print(f"Tabela {full_table_name} não existe. Criando...")
+            try:
+                # Cria a tabela vazia com o schema do DataFrame
+                create_stmt = f"CREATE TABLE {full_table_name} ("
+                
+                # Adiciona cada coluna do schema
+                for field in df.schema.fields:
+                    create_stmt += f"\n  {field.name} {field.dataType.simpleString()},"
+                
+                # Remove a vírgula final e fecha a definição
+                create_stmt = create_stmt.rstrip(',') + "\n)"
+                
+                # Adiciona particionamento se especificado
+                if partition_by:
+                    create_stmt += f"\nPARTITIONED BY ({', '.join(partition_by)})"
+                
+                create_stmt += "\nUSING DELTA"
+                
+                print(f"Executando: {create_stmt}")
+                self.spark.sql(create_stmt)
+                print(f"Tabela {full_table_name} criada com sucesso!")
+                
+            except Exception as e:
+                print(f"Erro ao criar tabela {full_table_name}: {str(e)}")
+                raise
         
-        # Write the DataFrame
+        # Configura o writer
         writer = df.write.format("delta")
         
-        # Apply partitioning if specified
+        # Aplica particionamento se especificado
         if partition_by:
             writer = writer.partitionBy(partition_by)
         
+        # Configura opções de escrita
         if merge_schema:
             writer = writer.option("mergeSchema", "true")
         if overwrite_schema:
             writer = writer.option("overwriteSchema", "true")
         
-        # Add error handling for the write operation
+        # Tenta escrever os dados
         try:
+            print(f"Escrevendo {df.count()} registros em {full_table_name}...")
             writer.mode(mode).saveAsTable(full_table_name)
-            logger.info(f"Successfully wrote {df.count()} rows to {full_table_name} in {mode} mode")
+            print(f"Dados escritos com sucesso em {full_table_name}")
+            
         except Exception as e:
-            logger.error(f"Error writing to table {full_table_name}: {str(e)}")
-            # If the error is related to schema mismatch and we're not already merging schemas, try with mergeSchema
-            if "schema mismatch" in str(e).lower() and not merge_schema:
-                logger.info("Retrying with mergeSchema=True...")
+            error_msg = str(e).lower()
+            print(f"Erro ao escrever na tabela {full_table_name}: {error_msg}")
+            
+            # Tenta com mergeSchema se for um erro de schema
+            if "schema mismatch" in error_msg and not merge_schema:
+                print("Tentando novamente com mergeSchema=True...")
                 writer.option("mergeSchema", "true").mode(mode).saveAsTable(full_table_name)
-                logger.info(f"Successfully wrote {df.count()} rows to {full_table_name} with mergeSchema=True")
+                print("Dados escritos com sucesso usando mergeSchema=True")
             else:
+                # Se for erro de tabela não encontrada, tenta criar novamente
+                if "table or view not found" in error_msg:
+                    print("Tentando recriar a tabela...")
+                    self.spark.sql(f"DROP TABLE IF EXISTS {full_table_name}")
+                    return self.write_dataframe(df, table_name, mode, merge_schema, overwrite_schema, partition_by)
                 raise
         
         # Optimize the table after write if it's an overwrite operation

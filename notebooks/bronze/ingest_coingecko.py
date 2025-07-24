@@ -293,25 +293,33 @@ def get_config_value(key, default=None):
         return default
 
 # Inicializa o gerenciador de tabelas Delta
-catalog_name = get_config_value('catalog_name', 'datafusionx_catalog')
+# Na versão Community, usamos 'hive_metastore' como catálogo
+catalog_name = 'hive_metastore'  # Usando hive_metastore para Community Edition
 bronze_schema = get_config_value('bronze_schema', 'bronze')
 table_name = "coingecko_raw"
 
-# Debug: Verificar os parâmetros antes de inicializar
-print(f"Inicializando DeltaTableManager com os seguintes parâmetros:")
-print(f"- catalog_name: {catalog_name}")
-print(f"- schema_name: {bronze_schema}")
-print(f"- table_name: {table_name}")
+print("\n=== Configuração do DeltaTableManager ===")
+print(f"Versão do Databricks: {spark.version}")
+print(f"Catálogo: {catalog_name}")
+print(f"Schema: {bronze_schema}")
+print(f"Tabela: {table_name}")
 
-# Inicializa o DeltaTableManager com todos os parâmetros necessários
+# Cria uma instância do DeltaTableManager
 try:
-    db_manager = DeltaTableManager(
-        spark=spark,
-        catalog_name=catalog_name,
-        schema_name=bronze_schema,
-        table_name=table_name
-    )
-    print("✅ DeltaTableManager inicializado com sucesso!")
+    db_manager = DeltaTableManager(spark, catalog_name, bronze_schema)
+    print("✅ Gerenciador de tabelas Delta inicializado com sucesso!")
+    
+    # Verifica se o banco de dados/schema existe
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS {bronze_schema}")
+    spark.sql(f"USE {bronze_schema}")
+    print(f"✅ Banco de dados/schema '{bronze_schema}' verificado/criado com sucesso!")
+    
+    # Lista as tabelas existentes para depuração
+    print("\n📋 Tabelas existentes no schema:")
+    spark.sql(f"SHOW TABLES IN {bronze_schema}").show(truncate=False)
+    
+    print("✅ Configuração inicial concluída com sucesso!")
+    
 except Exception as e:
     print(f"❌ Erro ao inicializar DeltaTableManager: {str(e)}")
     raise
