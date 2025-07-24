@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 # Databricks notebook source
-# DBTITLE 1,Ingestão de Dados CoinGecko (Simplificado)
+# DBTITLE 1,Ingestão de Dados CoinGecko (Databricks)
 """
-Script simplificado para ingestão de dados da API CoinGecko para Delta Lake.
+Script para ingestão de dados da API CoinGecko para Delta Lake no Databricks.
+Usa a sessão Spark existente.
 """
 
 import os
@@ -14,7 +15,7 @@ from pyspark.sql.types import StructType, StructField, StringType, DoubleType, T
 from pyspark.sql.functions import current_timestamp, lit
 
 # Configurações
-CATALOG_NAME = 'hive_metastore'
+CATALOG_NAME = 'main'  # Usando o catálogo padrão do Unity Catalog
 SCHEMA_NAME = 'bronze'
 TABLE_NAME = 'coingecko_raw'
 FULL_TABLE_NAME = f"{CATALOG_NAME}.{SCHEMA_NAME}.{TABLE_NAME}"
@@ -61,6 +62,41 @@ class CoinGeckoClient:
 
 def create_table_if_not_exists(spark):
     """Cria a tabela se ela não existir."""
+    # Define o schema da tabela
+    schema = StructType([
+        StructField("id", StringType()),
+        StructField("symbol", StringType()),
+        StructField("name", StringType()),
+        StructField("current_price", DoubleType()),
+        StructField("market_cap", DoubleType()),
+        StructField("total_volume", DoubleType()),
+        StructField("price_change_percentage_24h", DoubleType()),
+        StructField("last_updated", StringType()),
+        StructField("ingestion_timestamp", TimestampType()),
+        StructField("pipeline_run_id", StringType())
+    ])
+    
+    print(f"Verificando tabela {FULL_TABLE_NAME}...")
+    
+    # Verifica se a tabela já existe
+    if not spark.catalog.tableExists(FULL_TABLE_NAME):
+        print(f"Criando tabela {FULL_TABLE_NAME}...")
+        
+        # Cria o schema se não existir
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG_NAME}.{SCHEMA_NAME}")
+        
+        # Cria um DataFrame vazio com o schema e salva como tabela Delta
+        empty_rdd = spark.sparkContext.emptyRDD()
+        df = spark.createDataFrame(empty_rdd, schema)
+        
+        # Salva como tabela Delta
+        df.write.format("delta").mode("overwrite").saveAsTable(FULL_TABLE_NAME)
+        print(f"✅ Tabela {FULL_TABLE_NAME} criada com sucesso!")
+    else:
+        print(f"ℹ️  Tabela {FULL_TABLE_NAME} já existe.")
+
+def create_table_if_not_exists(spark):
+    """Cria a tabela se ela não existir."""
     schema = StructType([
         StructField("id", StringType()),
         StructField("symbol", StringType()),
@@ -92,9 +128,9 @@ def main():
     print(f"Tabela de destino: {FULL_TABLE_NAME}")
     
     try:
-        # 1. Inicializa o Spark
-        spark = init_spark()
-        print(f"✅ Spark inicializado. Versão: {spark.version}")
+        # 1. Obtém a sessão Spark existente
+        spark = SparkSession.builder.getOrCreate()
+        print(f"✅ Sessão Spark obtida. Versão: {spark.version}")
         
         # 2. Cria a tabela se não existir
         create_table_if_not_exists(spark)
@@ -151,11 +187,6 @@ def main():
     except Exception as e:
         print(f"\n❌ Erro durante a execução: {str(e)}")
         raise
-    finally:
-        if 'spark' in locals():
-            print("\nEncerrando sessão do Spark...")
-            spark.stop()
-            print("✅ Sessão do Spark encerrada.")
 
 if __name__ == "__main__":
     main()
