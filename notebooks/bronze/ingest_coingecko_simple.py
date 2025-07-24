@@ -15,10 +15,14 @@ from pyspark.sql.types import StructType, StructField, StringType, DoubleType, T
 from pyspark.sql.functions import current_timestamp, lit
 
 # Configurações
-CATALOG_NAME = 'hive_metastore'  # Usando o catálogo Hive Metastore
+# Usando Unity Catalog
+CATALOG_NAME = 'main'  # Catálogo padrão do Unity Catalog
 SCHEMA_NAME = 'bronze'
 TABLE_NAME = 'coingecko_raw'
 FULL_TABLE_NAME = f"{CATALOG_NAME}.{SCHEMA_NAME}.{TABLE_NAME}"
+
+# Verifica se estamos no Databricks
+IS_DATABRICKS = 'dbutils' in globals()
 
 # Inicialização do Spark
 def init_spark():
@@ -82,16 +86,36 @@ def create_table_if_not_exists(spark):
     if not spark.catalog.tableExists(FULL_TABLE_NAME):
         print(f"Criando tabela {FULL_TABLE_NAME}...")
         
-        # Cria o schema se não existir
-        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG_NAME}.{SCHEMA_NAME}")
-        
-        # Cria um DataFrame vazio com o schema e salva como tabela Delta
-        empty_rdd = spark.sparkContext.emptyRDD()
-        df = spark.createDataFrame(empty_rdd, schema)
-        
-        # Salva como tabela Delta
-        df.write.format("delta").mode("overwrite").saveAsTable(FULL_TABLE_NAME)
-        print(f"✅ Tabela {FULL_TABLE_NAME} criada com sucesso!")
+        try:
+            # Tenta criar o catálogo se não existir (apenas se não for o catálogo principal)
+            if CATALOG_NAME.lower() != 'main':
+                spark.sql(f"CREATE CATALOG IF NOT EXISTS {CATALOG_NAME}")
+            
+            # Cria o schema se não existir
+            spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG_NAME}.{SCHEMA_NAME}")
+            
+            # Cria a tabela usando SQL direto
+            create_table_sql = f"""
+            CREATE TABLE IF NOT EXISTS {FULL_TABLE_NAME} (
+                id STRING,
+                symbol STRING,
+                name STRING,
+                current_price DOUBLE,
+                market_cap DOUBLE,
+                total_volume DOUBLE,
+                price_change_percentage_24h DOUBLE,
+                last_updated STRING,
+                ingestion_timestamp TIMESTAMP,
+                pipeline_run_id STRING
+            )
+            USING DELTA
+            """
+            spark.sql(create_table_sql)
+            print(f"✅ Tabela {FULL_TABLE_NAME} criada com sucesso!")
+            
+        except Exception as e:
+            print(f"❌ Erro ao criar a tabela: {str(e)}")
+            raise
     else:
         print(f"ℹ️  Tabela {FULL_TABLE_NAME} já existe.")
 
@@ -132,10 +156,15 @@ def main():
         spark = SparkSession.builder.getOrCreate()
         print(f"✅ Sessão Spark obtida. Versão: {spark.version}")
         
-        # 2. Cria a tabela se não existir
+        # 2. Configura o catálogo atual
+        if IS_DATABRICKS and CATALOG_NAME != 'hive_metastore':
+            print(f"Definindo catálogo atual como: {CATALOG_NAME}")
+            spark.sql(f"USE CATALOG {CATALOG_NAME}")
+        
+        # 3. Cria a tabela se não existir
         create_table_if_not_exists(spark)
         
-        # 3. Busca dados da API
+        # 4. Busca dados da API
         print("\nBuscando dados da API CoinGecko...")
         client = CoinGeckoClient()
         data = client.get_market_data(per_page=10)  # Apenas 10 registros para testes
@@ -145,7 +174,7 @@ def main():
             
         print(f"✅ Dados recebidos: {len(data)} registros")
         
-        # 4. Prepara os dados para o DataFrame
+        # 5. Prepara os dados para o DataFrame
         print("Processando dados...")
         run_id = f"run_{int(datetime.now().timestamp())}"
         
@@ -165,18 +194,21 @@ def main():
                 run_id
             ))
         
-        # 5. Cria DataFrame com schema explícito
+        # 6. Cria DataFrame com schema explícito
         schema = spark.table(FULL_TABLE_NAME).schema
         df = spark.createDataFrame(rows, schema)
         
-        # 6. Salva os dados na tabela Delta
+        # 7. Salva os dados na tabela Delta
         print(f"\nSalvando dados na tabela {FULL_TABLE_NAME}...")
-        df.write.format("delta") \
-               .mode("append") \
-               .option("mergeSchema", "true") \
-               .saveAsTable(FULL_TABLE_NAME)
         
-        # 7. Mostra estatísticas
+        # Usa o modo correto para Unity Catalog
+        (df.write
+           .format("delta")
+           .mode("append")
+           .option("mergeSchema", "true")
+           .saveAsTable(FULL_TABLE_NAME))
+        
+        # 8. Mostra estatísticas
         total_records = spark.table(FULL_TABLE_NAME).count()
         print(f"✅ Dados salvos com sucesso! Total de registros na tabela: {total_records}")
         
@@ -186,6 +218,8 @@ def main():
         
     except Exception as e:
         print(f"\n❌ Erro durante a execução: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise
 
 if __name__ == "__main__":
