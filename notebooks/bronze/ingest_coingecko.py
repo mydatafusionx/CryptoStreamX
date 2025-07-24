@@ -306,7 +306,12 @@ print(f"Tabela: {table_name}")
 
 # Cria uma instância do DeltaTableManager
 try:
-    db_manager = DeltaTableManager(spark, catalog_name, bronze_schema)
+    # Inicializa sem o table_name, já que ele é opcional no construtor
+    db_manager = DeltaTableManager(
+        spark=spark,
+        catalog_name=catalog_name,
+        schema_name=bronze_schema
+    )
     print("✅ Gerenciador de tabelas Delta inicializado com sucesso!")
     
     # Verifica se o banco de dados/schema existe
