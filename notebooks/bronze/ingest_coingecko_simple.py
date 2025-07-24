@@ -1,41 +1,20 @@
 #!/usr/bin/env python
 # Databricks notebook source
-# DBTITLE 1,Ingestão de Dados CoinGecko (Databricks)
+# DBTITLE 1,Ingestão de Dados CoinGecko
 """
-Script para ingestão de dados da API CoinGecko para Delta Lake no Databricks.
-Usa a sessão Spark existente.
+Script para ingestão de dados da API CoinGecko para Delta Lake.
 """
 
-import os
-import sys
-import requests
-from datetime import datetime
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
 from pyspark.sql.functions import current_timestamp, lit
+import requests
+from datetime import datetime
 
 # Configurações
-# Usando Unity Catalog
-CATALOG_NAME = 'main'  # Catálogo padrão do Unity Catalog
 SCHEMA_NAME = 'bronze'
 TABLE_NAME = 'coingecko_raw'
-FULL_TABLE_NAME = f"{CATALOG_NAME}.{SCHEMA_NAME}.{TABLE_NAME}"
 
-# Verifica se estamos no Databricks
-IS_DATABRICKS = 'dbutils' in globals()
-
-# Inicialização do Spark
-def init_spark():
-    """Inicializa e retorna uma sessão do Spark."""
-    print("Inicializando Spark...")
-    return SparkSession.builder \
-        .appName("CryptoStreamX") \
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-        .config("spark.jars.packages", "io.delta:delta-core_2.12:2.2.0") \
-        .getOrCreate()
-
-# Cliente da API CoinGecko
 class CoinGeckoClient:
     def __init__(self, api_key=None):
         self.base_url = "https://api.coingecko.com/api/v3"
@@ -49,10 +28,10 @@ class CoinGeckoClient:
         params = {
             "vs_currency": vs_currency,
             "order": "market_cap_desc",
-            "per_page": 100,
+            "per_page": 10,  # Apenas 10 registros para teste
             "page": 1,
             "sparkline": False,
-            "price_change_percentage": "24h,7d"
+            "price_change_percentage": "24h"
         }
         params.update(kwargs)
         
@@ -64,163 +43,91 @@ class CoinGeckoClient:
             print(f"Erro na requisição: {str(e)}")
             return []
 
-def create_table_if_not_exists(spark):
-    """Cria a tabela se ela não existir."""
+def create_or_update_table(spark, data, table_name=TABLE_NAME, schema_name=SCHEMA_NAME):
+    """Cria ou atualiza a tabela com os dados fornecidos."""
     # Define o schema da tabela
     schema = StructType([
-        StructField("id", StringType()),
-        StructField("symbol", StringType()),
-        StructField("name", StringType()),
-        StructField("current_price", DoubleType()),
-        StructField("market_cap", DoubleType()),
-        StructField("total_volume", DoubleType()),
-        StructField("price_change_percentage_24h", DoubleType()),
-        StructField("last_updated", StringType()),
-        StructField("ingestion_timestamp", TimestampType()),
-        StructField("pipeline_run_id", StringType())
+        StructField("id", StringType(), False),
+        StructField("symbol", StringType(), False),
+        StructField("name", StringType(), False),
+        StructField("current_price", DoubleType(), False),
+        StructField("market_cap", DoubleType(), False),
+        StructField("total_volume", DoubleType(), False),
+        StructField("price_change_percentage_24h", DoubleType(), True),
+        StructField("last_updated", StringType(), False),
+        StructField("ingestion_timestamp", TimestampType(), False),
+        StructField("pipeline_run_id", StringType(), False)
     ])
     
-    print(f"Verificando tabela {FULL_TABLE_NAME}...")
+    # Prepara os dados
+    run_id = f"run_{int(datetime.utcnow().timestamp())}"
+    rows = []
+    for coin in data:
+        rows.append((
+            coin.get('id'),
+            coin.get('symbol', '').upper(),
+            coin.get('name', ''),
+            coin.get('current_price'),
+            coin.get('market_cap'),
+            coin.get('total_volume'),
+            coin.get('price_change_percentage_24h'),
+            coin.get('last_updated', ''),
+            datetime.utcnow(),
+            run_id
+        ))
     
-    # Verifica se a tabela já existe
-    if not spark.catalog.tableExists(FULL_TABLE_NAME):
-        print(f"Criando tabela {FULL_TABLE_NAME}...")
-        
-        try:
-            # Tenta criar o catálogo se não existir (apenas se não for o catálogo principal)
-            if CATALOG_NAME.lower() != 'main':
-                spark.sql(f"CREATE CATALOG IF NOT EXISTS {CATALOG_NAME}")
-            
-            # Cria o schema se não existir
-            spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG_NAME}.{SCHEMA_NAME}")
-            
-            # Cria a tabela usando SQL direto
-            create_table_sql = f"""
-            CREATE TABLE IF NOT EXISTS {FULL_TABLE_NAME} (
-                id STRING,
-                symbol STRING,
-                name STRING,
-                current_price DOUBLE,
-                market_cap DOUBLE,
-                total_volume DOUBLE,
-                price_change_percentage_24h DOUBLE,
-                last_updated STRING,
-                ingestion_timestamp TIMESTAMP,
-                pipeline_run_id STRING
-            )
-            USING DELTA
-            """
-            spark.sql(create_table_sql)
-            print(f"✅ Tabela {FULL_TABLE_NAME} criada com sucesso!")
-            
-        except Exception as e:
-            print(f"❌ Erro ao criar a tabela: {str(e)}")
-            raise
-    else:
-        print(f"ℹ️  Tabela {FULL_TABLE_NAME} já existe.")
-
-def create_table_if_not_exists(spark):
-    """Cria a tabela se ela não existir."""
-    schema = StructType([
-        StructField("id", StringType()),
-        StructField("symbol", StringType()),
-        StructField("name", StringType()),
-        StructField("current_price", DoubleType()),
-        StructField("market_cap", DoubleType()),
-        StructField("total_volume", DoubleType()),
-        StructField("price_change_percentage_24h", DoubleType()),
-        StructField("last_updated", StringType()),
-        StructField("ingestion_timestamp", TimestampType()),
-        StructField("pipeline_run_id", StringType())
-    ])
-    
-    print(f"Criando tabela {FULL_TABLE_NAME} se não existir...")
+    # Cria o DataFrame
+    df = spark.createDataFrame(rows, schema)
     
     # Cria o schema se não existir
-    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG_NAME}.{SCHEMA_NAME}")
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS {schema_name}")
     
-    # Cria a tabela se não existir
-    if not spark.catalog.tableExists(FULL_TABLE_NAME):
-        df = spark.createDataFrame([], schema)
-        df.write.format("delta").mode("overwrite").saveAsTable(FULL_TABLE_NAME)
-        print(f"✅ Tabela {FULL_TABLE_NAME} criada com sucesso!")
-    else:
-        print(f"ℹ️  Tabela {FULL_TABLE_NAME} já existe.")
+    # Salva a tabela
+    full_table_name = f"{schema_name}.{table_name}"
+    (df.write
+       .format("delta")
+       .mode("append")
+       .option("mergeSchema", "true")
+       .saveAsTable(full_table_name))
+    
+    # Otimiza a tabela
+    spark.sql(f"OPTIMIZE {full_table_name} ZORDER BY (id)")
+    
+    # Retorna informações
+    count = spark.table(full_table_name).count()
+    print(f"\n✅ Dados salvos em '{full_table_name}'")
+    print(f"📊 Total de registros: {count:,}")
+    print("\n📝 Amostra dos dados:")
+    spark.table(full_table_name).show(5, truncate=False)
+    
+    return df
 
 def main():
     print("=== Iniciando ingestão de dados da CoinGecko ===")
-    print(f"Tabela de destino: {FULL_TABLE_NAME}")
     
     try:
-        # 1. Obtém a sessão Spark existente
+        # Inicializa a sessão Spark
         spark = SparkSession.builder.getOrCreate()
-        print(f"✅ Sessão Spark obtida. Versão: {spark.version}")
+        print(f"✅ Spark inicializado. Versão: {spark.version}")
         
-        # 2. Configura o catálogo atual
-        if IS_DATABRICKS and CATALOG_NAME != 'hive_metastore':
-            print(f"Definindo catálogo atual como: {CATALOG_NAME}")
-            spark.sql(f"USE CATALOG {CATALOG_NAME}")
-        
-        # 3. Cria a tabela se não existir
-        create_table_if_not_exists(spark)
-        
-        # 4. Busca dados da API
+        # Busca dados da API
         print("\nBuscando dados da API CoinGecko...")
         client = CoinGeckoClient()
-        data = client.get_market_data(per_page=10)  # Apenas 10 registros para testes
+        data = client.get_market_data()
         
         if not data:
             raise ValueError("Nenhum dado retornado pela API")
-            
+        
         print(f"✅ Dados recebidos: {len(data)} registros")
         
-        # 5. Prepara os dados para o DataFrame
-        print("Processando dados...")
-        run_id = f"run_{int(datetime.now().timestamp())}"
-        
-        # Extrai apenas os campos que precisamos
-        rows = []
-        for coin in data:
-            rows.append((
-                coin.get('id'),
-                coin.get('symbol'),
-                coin.get('name'),
-                coin.get('current_price'),
-                coin.get('market_cap'),
-                coin.get('total_volume'),
-                coin.get('price_change_percentage_24h'),
-                coin.get('last_updated'),
-                datetime.now(),
-                run_id
-            ))
-        
-        # 6. Cria DataFrame com schema explícito
-        schema = spark.table(FULL_TABLE_NAME).schema
-        df = spark.createDataFrame(rows, schema)
-        
-        # 7. Salva os dados na tabela Delta
-        print(f"\nSalvando dados na tabela {FULL_TABLE_NAME}...")
-        
-        # Usa o modo correto para Unity Catalog
-        (df.write
-           .format("delta")
-           .mode("append")
-           .option("mergeSchema", "true")
-           .saveAsTable(FULL_TABLE_NAME))
-        
-        # 8. Mostra estatísticas
-        total_records = spark.table(FULL_TABLE_NAME).count()
-        print(f"✅ Dados salvos com sucesso! Total de registros na tabela: {total_records}")
-        
-        # Mostra uma amostra dos dados
-        print("\n📋 Amostra dos dados salvos:")
-        spark.table(FULL_TABLE_NAME).show(5, truncate=False)
+        # Processa e salva os dados
+        print("\nProcessando e salvando dados...")
+        df = create_or_update_table(spark, data)
         
     except Exception as e:
         print(f"\n❌ Erro durante a execução: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise
 
 if __name__ == "__main__":
     main()
