@@ -117,12 +117,27 @@ def read_bronze_data():
             """).collect()
         else:
             logger.info(f"Usando a coluna '{timestamp_col}' para ordenação temporal")
-            latest_run = spark.sql(f"""
-                SELECT DISTINCT pipeline_run_id 
+            # Primeiro, obtém o timestamp mais recente
+            latest_timestamp = spark.sql(f"""
+                SELECT MAX(`{timestamp_col}`) as max_timestamp
                 FROM {config.bronze_table_path}
-                ORDER BY {timestamp_col} DESC 
-                LIMIT 1
-            """).collect()
+            """).collect()[0].max_timestamp
+            
+            # Depois, busca o pipeline_run_id correspondente
+            if latest_timestamp:
+                latest_run = spark.sql(f"""
+                    SELECT DISTINCT pipeline_run_id 
+                    FROM {config.bronze_table_path}
+                    WHERE `{timestamp_col}` = "{latest_timestamp}"
+                    LIMIT 1
+                """).collect()
+            else:
+                # Fallback se não encontrar timestamp
+                latest_run = spark.sql(f"""
+                    SELECT DISTINCT pipeline_run_id 
+                    FROM {config.bronze_table_path}
+                    LIMIT 1
+                """).collect()
         
         if not latest_run:
             logger.warning("Nenhum dado encontrado na camada Bronze.")
