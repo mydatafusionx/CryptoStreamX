@@ -49,6 +49,26 @@ class DeltaTableManager:
             return True
         except:
             return False
+            
+    def create_table_from_dataframe(self, df, table_path, partition_cols=None):
+        """Cria uma nova tabela Delta a partir de um DataFrame."""
+        logger.info(f"Criando nova tabela {table_path}...")
+        writer = df.write.format("delta")
+        
+        if partition_cols:
+            writer = writer.partitionBy(partition_cols)
+            
+        writer.mode("overwrite").saveAsTable(table_path)
+        logger.info(f"Tabela {table_path} criada com sucesso!")
+        
+        # Otimiza a tabela após criação
+        self.optimize_table(table_path)
+        
+    def optimize_table(self, table_path):
+        """Otimiza a tabela Delta."""
+        logger.info(f"Otimizando tabela {table_path}...")
+        self.spark.sql(f"OPTIMIZE {table_path} ZORDER BY (id)")
+        logger.info(f"Tabela {table_path} otimizada com sucesso")
 
 # Inicializa o gerenciador de tabelas Delta
 try:
@@ -348,30 +368,32 @@ def save_to_silver(df):
             # Cria uma view temporária
             df.createOrReplaceTempView("updates")
             
-            # Usa MERGE para atualizar os dados existentes
-            merge_sql = f"""
-            MERGE INTO {config.silver_table_path} target
-            USING updates source
-            ON target.id = source.id AND target.last_updated = source.last_updated
-            WHEN NOT MATCHED THEN
-                INSERT *
-            """
-            spark.sql(merge_sql)
+            try:
+                # Tenta fazer o merge
+                merge_sql = f"""
+                MERGE INTO {config.silver_table_path} target
+                USING updates source
+                ON target.id = source.id AND target.last_updated = source.last_updated
+                WHEN NOT MATCHED THEN
+                    INSERT *
+                """
+                spark.sql(merge_sql)
+                logger.info("Dados mesclados com sucesso na tabela existente.")
+            except Exception as merge_error:
+                logger.warning(f"Erro ao fazer merge, tentando sobrescrever a tabela: {str(merge_error)}")
+                # Se o merge falhar, tenta sobrescrever a tabela
+                db_manager.create_table_from_dataframe(df, config.silver_table_path)
         else:
             # Cria uma nova tabela
-            logger.info(f"Criando nova tabela {config.silver_table_path}...")
-            df.write.format("delta").mode("overwrite").saveAsTable(config.silver_table_path)
-        
-        # Otimiza a tabela
-        spark.sql(f"OPTIMIZE {config.silver_table_path} ZORDER BY (id)")
+            db_manager.create_table_from_dataframe(df, config.silver_table_path)
         
         # Verifica o resultado
         saved_count = spark.table(config.silver_table_path).count()
-        logger.info(f"Dados salvos com sucesso em {config.silver_table_path}. Total de registros: {saved_count}")
+        logger.info(f"✅ Dados salvos com sucesso em {config.silver_table_path}. Total de registros: {saved_count}")
         return True
         
     except Exception as e:
-        logger.error(f"Erro ao salvar dados na camada Silver: {str(e)}")
+        logger.error(f"❌ Erro ao salvar dados na camada Silver: {str(e)}", exc_info=True)
         raise
 
 # COMMAND ----------
