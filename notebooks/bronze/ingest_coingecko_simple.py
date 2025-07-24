@@ -15,7 +15,7 @@ from pyspark.sql.types import StructType, StructField, StringType, DoubleType, T
 from pyspark.sql.functions import current_timestamp, lit
 
 # Configurações
-CATALOG_NAME = 'main'  # Usando o catálogo padrão do Unity Catalog
+CATALOG_NAME = 'hive_metastore'  # Usando o catálogo Hive Metastore
 SCHEMA_NAME = 'bronze'
 TABLE_NAME = 'coingecko_raw'
 FULL_TABLE_NAME = f"{CATALOG_NAME}.{SCHEMA_NAME}.{TABLE_NAME}"
