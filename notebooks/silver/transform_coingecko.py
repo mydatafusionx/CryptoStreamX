@@ -9,10 +9,31 @@ import time
 from datetime import datetime
 import json
 import logging
+from functools import wraps
 
 # Configura o logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Decorador para retry com backoff
+def retry_with_backoff(retries=3, backoff_in_seconds=1):
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            retry_count = 0
+            while retry_count < retries:
+                try:
+                    return f(*args, **kwargs)
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count == retries:
+                        logger.error(f"Operação falhou após {retries} tentativas: {str(e)}")
+                        raise
+                    wait_time = backoff_in_seconds * (2 ** (retry_count - 1))
+                    logger.warning(f"Tentativa {retry_count}/{retries} - aguardando {wait_time}s antes de tentar novamente...")
+                    time.sleep(wait_time)
+        return wrapper
+    return decorator
 
 # Configurações
 class Config:
@@ -23,7 +44,7 @@ class Config:
         self.bronze_table = 'coingecko_raw'
         self.silver_table = 'coingecko_enriched'
         
-        # Configurações adicionais podem ser adicionadas aqui
+        # Configurações adicionais
         self.silver_table_path = f"{self.silver_schema}.{self.silver_table}"
         self.bronze_table_path = f"{self.bronze_schema}.{self.bronze_table}"
 
@@ -35,53 +56,87 @@ class DeltaTableManager:
     def __init__(self, spark, schema_name=None):
         self.spark = spark
         self.schema_name = schema_name
+        self.max_retries = 3
+        self.retry_delay = 2  # segundos
     
+    @retry_with_backoff(retries=3, backoff_in_seconds=2)
     def create_schema_if_not_exists(self):
-        """Cria o schema se não existir."""
-        if self.schema_name:
-            self.spark.sql(f"CREATE SCHEMA IF NOT EXISTS {self.schema_name}")
-        return self
-    
-    def table_exists(self, table_path):
-        """Verifica se a tabela existe."""
+        """Cria o schema se não existir com tratamento de erros e retry."""
+        if not self.schema_name:
+            return self
+            
         try:
-            self.spark.sql(f"DESCRIBE TABLE {table_path}")
-            return True
-        except:
+            logger.info(f"Verificando/Criando schema: {self.schema_name}")
+            self.spark.sql(f"CREATE SCHEMA IF NOT EXISTS {self.schema_name}")
+            logger.info(f"Schema {self.schema_name} verificado/criado com sucesso")
+            return self
+        except Exception as e:
+            logger.error(f"Falha ao criar schema {self.schema_name}: {str(e)}")
+            raise
+    
+    @retry_with_backoff(retries=3, backoff_in_seconds=2)
+    def table_exists(self, table_path):
+        """Verifica se a tabela existe com tratamento de erros e retry."""
+        try:
+            logger.debug(f"Verificando existência da tabela: {table_path}")
+            df = self.spark.sql(f"SHOW TABLES IN {table_path.split('.')[0]} LIKE '{table_path.split('.')[-1]}'")
+            exists = df.count() > 0
+            logger.debug(f"Tabela {table_path} existe: {exists}")
+            return exists
+        except Exception as e:
+            logger.error(f"Erro ao verificar existência da tabela {table_path}: {str(e)}")
             return False
-            
+    
+    @retry_with_backoff(retries=3, backoff_in_seconds=2)
     def create_table_from_dataframe(self, df, table_path, partition_cols=None):
-        """Cria uma nova tabela Delta a partir de um DataFrame."""
-        logger.info(f"Criando nova tabela {table_path}...")
-        writer = df.write.format("delta")
-        
-        if partition_cols:
-            writer = writer.partitionBy(partition_cols)
+        """Cria uma nova tabela Delta a partir de um DataFrame com tratamento de erros e retry."""
+        try:
+            logger.info(f"Criando nova tabela {table_path}...")
+            writer = df.write.format("delta")
             
-        writer.mode("overwrite").saveAsTable(table_path)
-        logger.info(f"Tabela {table_path} criada com sucesso!")
-        
-        # Otimiza a tabela após criação
-        self.optimize_table(table_path)
-        
+            if partition_cols:
+                writer = writer.partitionBy(partition_cols)
+                
+            writer.mode("overwrite").saveAsTable(table_path)
+            logger.info(f"Tabela {table_path} criada com sucesso!")
+            
+            # Otimiza a tabela após criação
+            self.optimize_table(table_path)
+            return True
+        except Exception as e:
+            logger.error(f"Falha ao criar tabela {table_path}: {str(e)}")
+            raise
+    
+    @retry_with_backoff(retries=3, backoff_in_seconds=2)
     def optimize_table(self, table_path):
-        """Otimiza a tabela Delta."""
-        logger.info(f"Otimizando tabela {table_path}...")
-        self.spark.sql(f"OPTIMIZE {table_path} ZORDER BY (id)")
-        logger.info(f"Tabela {table_path} otimizada com sucesso")
+        """Otimiza a tabela Delta com tratamento de erros e retry."""
+        try:
+            logger.info(f"Otimizando tabela {table_path}...")
+            self.spark.sql(f"OPTIMIZE {table_path} ZORDER BY (id)")
+            logger.info(f"Tabela {table_path} otimizada com sucesso")
+            return True
+        except Exception as e:
+            logger.error(f"Falha ao otimizar tabela {table_path}: {str(e)}")
+            raise
 
-# Inicializa o gerenciador de tabelas Delta
+# Inicializa o gerenciador de tabelas Delta com tratamento de erros
 try:
+    logger.info("Inicializando o gerenciador de tabelas Delta...")
     db_manager = DeltaTableManager(spark=spark, schema_name=config.silver_schema)
     db_manager.create_schema_if_not_exists()
     logger.info(f"Conexão com o banco de dados inicializada: {config.silver_schema}")
+    
+    # Verifica se as tabelas existem
+    bronze_exists = db_manager.table_exists(config.bronze_table_path)
+    logger.info(f"Tabela Bronze existe: {bronze_exists}")
+    
+    logger.info(f"Tabela Bronze configurada: {config.bronze_table_path}")
+    logger.info(f"Tabela Silver configurada: {config.silver_table_path}")
+    
 except Exception as e:
-    logger.error(f"Erro ao inicializar o gerenciador de tabelas Delta: {str(e)}")
+    logger.error(f"Falha crítica ao inicializar o gerenciador de tabelas Delta: {str(e)}")
+    logger.exception("Detalhes do erro:")
     raise
-
-# Log das configurações
-logger.info(f"Tabela Bronze configurada: {config.bronze_table_path}")
-logger.info(f"Tabela Silver configurada: {config.silver_table_path}")
 
 # COMMAND ----------
 
